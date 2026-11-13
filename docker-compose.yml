@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: worksight_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: worksight
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: worksight_backend
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: 5000
+      NODE_ENV: production
+      DATABASE_URL: "postgresql://postgres:password123@postgres:5432/worksight?schema=public"
+      JWT_SECRET: "worksight_super_secret_jwt_key_2026_enterprise_monitoring"
+      EZVIZ_APP_KEY: "${EZVIZ_APP_KEY}"
+      EZVIZ_APP_SECRET: "${EZVIZ_APP_SECRET}"
+      EZVIZ_ACCESS_TOKEN: "${EZVIZ_ACCESS_TOKEN}"
+      EZVIZ_API_BASE_URL: "https://open.ezvizlife.com"
+      FRONTEND_URL: "http://localhost:3000"
+    depends_on:
+      - postgres
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: worksight_frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:5000/api"
+    depends_on:
+      - backend
+
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: worksight_ai_service
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      BACKEND_API_URL: "http://backend:5000/api"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+
