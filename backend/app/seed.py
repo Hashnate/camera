@@ -104,6 +104,9 @@ def seed(db: Session) -> None:
         ("EMP-103", "David Kim", "UI/UX Product Designer", "Product & Design"),
         ("EMP-104", "Elena Rostova", "Operations Lead", "Operations"),
         ("EMP-105", "Marcus Johnson", "HR Generalist", "Human Resources"),
+        ("EMP-106", "Priya Sharma", "Computer Vision Specialist", "Engineering"),
+        ("EMP-107", "James Wilson", "DevOps & Cloud Architect", "Engineering"),
+        ("EMP-108", "Amina Hassan", "Quality Assurance Analyst", "Operations"),
     ]
     employees = []
     for code, name, title, dept in samples:
