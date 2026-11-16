@@ -13,6 +13,7 @@ import {
   LogOut,
   ShieldCheck,
   Video,
+  Timer,
 } from 'lucide-react';
 import { setStoredToken } from '@/lib/api';
 
@@ -21,6 +22,7 @@ const navigation = [
   { name: 'Live Cameras', href: '/dashboard/cameras', icon: Cctv, badge: 'EZVIZ Live' },
   { name: 'Employees', href: '/dashboard/employees', icon: Users },
   { name: 'Attendance', href: '/dashboard/attendance', icon: CalendarCheck },
+  { name: 'Work Hours', href: '/dashboard/work-hours', icon: Timer },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
 ];
 

@@ -1,17 +1,18 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { CalendarCheck, Clock, CheckCircle2, AlertTriangle, UserX, UserCheck } from 'lucide-react';
+import { CalendarCheck, Clock, CheckCircle2, AlertTriangle, UserX, UserCheck, ScanFace, Hand } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { api } from '@/lib/api';
+import { AutoAttendancePanel } from '@/components/AutoAttendancePanel';
 
 export default function AttendancePage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchAttendance = async () => {
+  const fetchAttendance = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const res = await api.getTodayAttendance();
       if (res.success) {
         setData(res);
@@ -25,6 +26,9 @@ export default function AttendancePage() {
 
   useEffect(() => {
     fetchAttendance();
+    // Keep the ledger current as the camera marks people in/out.
+    const t = setInterval(() => fetchAttendance(true), 30000);
+    return () => clearInterval(t);
   }, []);
 
   const stats = data?.stats || {
@@ -87,6 +91,8 @@ export default function AttendancePage() {
           </div>
         </div>
 
+        <AutoAttendancePanel onActivity={() => fetchAttendance(true)} />
+
         {/* Ledger Table */}
         <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -103,18 +109,19 @@ export default function AttendancePage() {
                 <th className="py-3.5 px-4">Departure (Check-Out)</th>
                 <th className="py-3.5 px-4">Total Office Time</th>
                 <th className="py-3.5 px-4">Status</th>
+                <th className="py-3.5 px-4">Source</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400">
+                  <td colSpan={7} className="py-8 text-center text-slate-400">
                     Loading attendance ledger...
                   </td>
                 </tr>
               ) : records.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400">
+                  <td colSpan={7} className="py-8 text-center text-slate-400">
                     No attendance records logged for today
                   </td>
                 </tr>
@@ -131,7 +138,12 @@ export default function AttendancePage() {
                       {rec.checkIn ? new Date(rec.checkIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
                     </td>
                     <td className="py-3 px-4 font-mono">
-                      {rec.checkOut ? new Date(rec.checkOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'In Office'}
+                      {rec.checkOut ? (
+                        <>
+                          {new Date(rec.checkOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {rec.source === 'AUTO' && <span className="ml-1 text-[10px] text-slate-400 font-sans">last seen</span>}
+                        </>
+                      ) : 'In Office'}
                     </td>
                     <td className="py-3 px-4 text-slate-600">
                       {rec.totalMinutes > 0 ? `${Math.floor(rec.totalMinutes / 60)}h ${rec.totalMinutes % 60}m` : 'In Progress'}
@@ -144,6 +156,17 @@ export default function AttendancePage() {
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                           <CheckCircle2 className="w-3 h-3" /> Present On Time
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      {rec.source === 'AUTO' ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700">
+                          <ScanFace className="w-3.5 h-3.5" /> Camera
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-slate-500">
+                          <Hand className="w-3.5 h-3.5" /> Manual
                         </span>
                       )}
                     </td>

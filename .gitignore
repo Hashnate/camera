@@ -20,6 +20,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 
 # Environment files, secrets & credentials (EXCLUDED)
@@ -45,3 +46,9 @@ desktop.ini
 # IDEs
 .vscode/
 .idea/
+
+# Downloaded face-recognition models (fetch with ai-service/download_models.py)
+ai-service/models/
+
+# TypeScript incremental build cache
+*.tsbuildinfo

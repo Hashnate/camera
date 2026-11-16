@@ -1,14 +1,30 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Users, Plus, Search, Building2, Briefcase, Mail, CheckCircle2, XCircle } from 'lucide-react';
+import { Search, Building2, CheckCircle2, ScanFace, UserPlus } from 'lucide-react';
 import { Header } from '@/components/Header';
-import { api } from '@/lib/api';
+import { api, FaceEnrollmentSummary } from '@/lib/api';
+import { FaceEnrollModal } from '@/components/FaceEnrollModal';
+import { AddEmployeeModal } from '@/components/AddEmployeeModal';
 
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [faces, setFaces] = useState<Record<string, FaceEnrollmentSummary>>({});
+  const [maxSamples, setMaxSamples] = useState(5);
+  const [enrolling, setEnrolling] = useState<any | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  const fetchFaces = async () => {
+    try {
+      const res = await api.getFaceEnrollments();
+      setFaces(Object.fromEntries(res.data.map((f) => [f.employeeId, f])));
+      setMaxSamples(res.maxSamples);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const fetchEmployees = async () => {
     try {
@@ -26,7 +42,10 @@ export default function EmployeesPage() {
 
   useEffect(() => {
     fetchEmployees();
+    fetchFaces();
   }, []);
+
+  const enrolledCount = Object.keys(faces).length;
 
   const filtered = employees.filter(
     (e) =>
@@ -60,6 +79,15 @@ export default function EmployeesPage() {
             <span className="text-xs text-slate-500 font-medium">
               Total: {employees.length} Employees
             </span>
+            <span className="inline-flex items-center gap-1 text-xs text-blue-700 font-medium">
+              <ScanFace className="w-3.5 h-3.5" /> {enrolledCount} enrolled for auto-attendance
+            </span>
+            <button
+              onClick={() => setAdding(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700"
+            >
+              <UserPlus className="w-4 h-4" /> Add employee
+            </button>
           </div>
         </div>
 
@@ -74,18 +102,19 @@ export default function EmployeesPage() {
                 <th className="py-3.5 px-4">Schedule</th>
                 <th className="py-3.5 px-4">Assigned Area</th>
                 <th className="py-3.5 px-4">Status</th>
+                <th className="py-3.5 px-4">Face ID</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400">
+                  <td colSpan={7} className="py-8 text-center text-slate-400">
                     Loading employee directory...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400">
+                  <td colSpan={7} className="py-8 text-center text-slate-400">
                     No employees matching search criteria
                   </td>
                 </tr>
@@ -121,6 +150,19 @@ export default function EmployeesPage() {
                         <CheckCircle2 className="w-3 h-3" /> Active
                       </span>
                     </td>
+                    <td className="py-3 px-4">
+                      <button
+                        onClick={() => setEnrolling(emp)}
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold border ${
+                          faces[emp.id]
+                            ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <ScanFace className="w-3.5 h-3.5" />
+                        {faces[emp.id] ? `Enrolled (${faces[emp.id].samples})` : 'Enrol face'}
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -128,6 +170,27 @@ export default function EmployeesPage() {
           </table>
         </div>
       </main>
+
+      {adding && (
+        <AddEmployeeModal
+          onClose={() => setAdding(false)}
+          onCreated={(emp) => {
+            setAdding(false);
+            fetchEmployees();
+            setEnrolling(emp); // go straight to face enrolment
+          }}
+        />
+      )}
+
+      {enrolling && (
+        <FaceEnrollModal
+          employee={enrolling}
+          enrollment={faces[enrolling.id]}
+          maxSamples={maxSamples}
+          onClose={() => setEnrolling(null)}
+          onChanged={fetchFaces}
+        />
+      )}
     </>
   );
 }

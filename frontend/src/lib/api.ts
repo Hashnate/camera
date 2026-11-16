@@ -87,6 +87,14 @@ export const api = {
   // Employees
   getEmployees: () =>
     apiFetch<{ success: boolean; count: number; data: any[] }>('/employees'),
+  getEmployeeFormOptions: () =>
+    apiFetch<{
+      success: boolean;
+      data: {
+        departments: { id: string; name: string }[];
+        workSchedules: { id: string; name: string; startTime: string; endTime: string }[];
+      };
+    }>('/employees/form-options'),
   createEmployee: (payload: any) =>
     apiFetch<{ success: boolean; data: any }>('/employees', {
       method: 'POST',
@@ -113,6 +121,32 @@ export const api = {
       body: JSON.stringify({ employeeId }),
     }),
 
+  // Face enrolment (automatic attendance)
+  getFaceEnrollments: () =>
+    apiFetch<{ success: boolean; maxSamples: number; data: FaceEnrollmentSummary[] }>('/faces'),
+  enrollFace: (employeeId: string, image: Blob, source: 'UPLOAD' | 'WEBCAM') => {
+    const form = new FormData();
+    form.append('image', image, 'face.jpg');
+    form.append('consent', 'true');
+    form.append('source', source);
+    return apiFetch<{ success: boolean; message: string; data: FaceEnrollmentSummary }>(`/faces/${employeeId}`, {
+      method: 'POST',
+      body: form,
+    });
+  },
+  revokeFace: (employeeId: string) =>
+    apiFetch<{ success: boolean; message: string; deleted: number }>(`/faces/${employeeId}`, {
+      method: 'DELETE',
+    }),
+
+  // Recognition feed & AI worker status
+  getRecognitionEvents: (limit = 20, actions?: string) =>
+    apiFetch<{ success: boolean; count: number; data: RecognitionEvent[] }>(
+      `/recognition/events?limit=${limit}${actions ? `&actions=${actions}` : ''}`
+    ),
+  getRecognitionStatus: () =>
+    apiFetch<{ success: boolean; data: RecognitionStatus }>('/recognition/status'),
+
   // Analytics
   getOverviewStats: () =>
     apiFetch<{ success: boolean; data: any }>('/analytics/overview'),
@@ -120,3 +154,99 @@ export const api = {
     apiFetch<{ success: boolean; data: any[] }>('/analytics/occupancy'),
 };
 
+
+export interface FaceEnrollmentSummary {
+  employeeId: string;
+  samples: number;
+  consentGivenAt: string;
+  lastEnrolledAt: string;
+}
+
+export interface RecognitionEvent {
+  id: string;
+  employeeId: string;
+  cameraId: string | null;
+  channelNo: number;
+  similarity: number;
+  action: 'CHECK_IN' | 'CHECK_OUT' | 'SEEN' | 'IGNORED_INACTIVE';
+  seenAt: string;
+  employee: { id: string; fullName: string; employeeCode: string; jobTitle: string };
+  camera: { id: string; name: string } | null;
+}
+
+export interface RecognitionChannelStatus {
+  cameraId: string;
+  cameraName: string;
+  channelNo: number;
+  source: 'hls' | 'snapshot' | 'webcam' | 'file' | 'folder' | null;
+  state: 'starting' | 'connecting' | 'running' | 'idle' | 'error';
+  lastFrameAt: string | null;
+  framesProcessed: number;
+  facesDetected: number;
+  lastError: string | null;
+}
+
+export interface RecognitionStatus {
+  reachable: boolean;
+  error?: string;
+  workerEnabled?: boolean;
+  running?: boolean;
+  galleryEmployees?: number;
+  lastError?: string | null;
+  sourceOverride?: boolean;
+  channels?: RecognitionChannelStatus[];
+}
+
+export interface WorkSession {
+  start: string;
+  end: string;
+  minutes: number;
+}
+
+export interface WorkDayRow {
+  employee: { id: string; fullName: string; employeeCode: string; jobTitle?: string; department: string | null };
+  scheduledMinutes: number | null;
+  state: 'IN_OFFICE' | 'LEFT' | 'ABSENT';
+  date: string | null;
+  measured: boolean;
+  checkIn: string | null;
+  lastSeen: string | null;
+  insideMinutes: number;
+  spanMinutes: number;
+  awayMinutes: number;
+  isLate: boolean;
+  sessions: WorkSession[];
+}
+
+export interface WorkPeriodRow {
+  employee: { id: string; fullName: string; employeeCode: string; department: string | null };
+  daysPresent: number;
+  lateDays: number;
+  totalInsideMinutes: number;
+  totalSpanMinutes: number;
+  avgInsideMinutes: number;
+  scheduledMinutesPerDay: number | null;
+  measuredDays: number;
+  days: { date: string; insideMinutes: number; spanMinutes: number }[];
+}
+
+export const workHoursApi = {
+  daily: (date?: string) =>
+    apiFetch<{
+      success: boolean;
+      date: string;
+      isToday: boolean;
+      settings: { presenceGapMin: number; sightingCreditMin: number };
+      summary: { employees: number; present: number; inOfficeNow: number | null; totalInsideMinutes: number; avgInsideMinutes: number };
+      data: WorkDayRow[];
+    }>(`/work-hours/daily${date ? `?date=${date}` : ''}`),
+  summary: (startDate: string, endDate: string) =>
+    apiFetch<{
+      success: boolean;
+      startDate: string;
+      endDate: string;
+      dates: string[];
+      settings: { presenceGapMin: number };
+      data: WorkPeriodRow[];
+    }>(`/work-hours/summary?startDate=${startDate}&endDate=${endDate}`),
+};
