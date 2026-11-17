@@ -2,14 +2,33 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 
 from app.config import settings
 from app.errors import register_error_handlers
 from app.database import Base, engine
-from app.routers import analytics, attendance, auth, cameras, employees, faces, internal, recognition, work_hours
+from app.routers import (
+    analytics,
+    attendance,
+    auth,
+    breaks,
+    cameras,
+    daily_tracking,
+    employees,
+    faces,
+    internal,
+    presence,
+    recognition,
+    tracking,
+    work_attendance,
+    work_hours,
+    zones,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("worksight")
@@ -44,6 +63,10 @@ app.add_middleware(
 
 register_error_handlers(app)
 
+UPLOADS_DIR = Path(__file__).resolve().parent.parent / "uploads"
+(UPLOADS_DIR / "faces").mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+
 
 @app.get("/api/health")
 def health():
@@ -55,5 +78,9 @@ def health():
     }
 
 
-for module in (auth, cameras, employees, attendance, analytics, faces, recognition, work_hours, internal):
+for module in (auth, work_attendance, presence, zones, tracking, daily_tracking, breaks, cameras, employees, attendance, analytics, faces, recognition, work_hours, internal):
     app.include_router(module.router)
+
+app.include_router(presence.internal_router)
+app.include_router(tracking.internal_router)
+app.include_router(daily_tracking.internal_daily_router)

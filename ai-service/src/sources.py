@@ -58,7 +58,16 @@ class LatestFrameCapture(FrameSource):
     def _loop(self) -> None:
         misses = 0
         while not self._stop.is_set():
-            ok, frame = self._cap.read()
+            try:
+                ok, frame = self._cap.read()
+            except Exception as exc:
+                misses += 1
+                if misses > 20:
+                    self.failed = True
+                    return
+                time.sleep(0.2)
+                continue
+
             if not ok:
                 misses += 1
                 if misses > 50:

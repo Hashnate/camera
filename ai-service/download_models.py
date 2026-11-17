@@ -9,6 +9,7 @@ BASE = "https://github.com/opencv/opencv_zoo/raw/main/models"
 MODELS = {
     "face_detection_yunet_2023mar.onnx": f"{BASE}/face_detection_yunet/face_detection_yunet_2023mar.onnx",
     "face_recognition_sface_2021dec.onnx": f"{BASE}/face_recognition_sface/face_recognition_sface_2021dec.onnx",
+    "person_detection_mediapipe_2023mar.onnx": f"{BASE}/person_detection_mediapipe/person_detection_mediapipe_2023mar.onnx",
 }
 
 out_dir = Path(__file__).resolve().parent / "models"

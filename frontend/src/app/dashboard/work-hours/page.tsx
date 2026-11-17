@@ -1,498 +1,948 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Timer, Users, Building2, LogOut, UserX, Download, Info } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import Link from 'next/link';
+import {
+  Timer,
+  Users,
+  Building2,
+  Coffee,
+  DoorOpen,
+  HelpCircle,
+  Activity,
+  Calendar,
+  RefreshCw,
+  FileText,
+  Download,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronRight,
+  ShieldCheck,
+  MapPin,
+  Clock,
+  LogOut,
+  Sliders,
+  X,
+  Edit3,
+  Eye,
+  ArrowRight,
+  UserCheck,
+} from 'lucide-react';
 import { Header } from '@/components/Header';
-import { workHoursApi, WorkDayRow, WorkPeriodRow } from '@/lib/api';
+import {
+  api,
+  DailyTrackingItem,
+  DailyTrackingSummary,
+  DailyEmployeeDetail,
+  DailyTrackingReport,
+} from '@/lib/api';
 
-// ---------------------------------------------------------------- helpers
-
-const INSIDE = '#2563eb'; // blue-600: the one series colour on this page
-const TRACK = '#f1f5f9'; // slate-100
-
-const fmt = (min: number) => (min > 0 ? `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m` : '—');
-const time = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
-const localDate = (d = new Date()) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const minutesOfDay = (iso: string) => {
-  const d = new Date(iso);
-  return d.getHours() * 60 + d.getMinutes();
+const ZONE_COLORS: Record<string, { bg: string; text: string; border: string; label: string; icon: React.ElementType }> = {
+  WORK_ROOM: {
+    bg: 'bg-emerald-50 text-emerald-700',
+    text: 'text-emerald-700',
+    border: 'border-emerald-200',
+    label: 'Working Room',
+    icon: Building2,
+  },
+  LUNCH_ROOM: {
+    bg: 'bg-amber-50 text-amber-700',
+    text: 'text-amber-700',
+    border: 'border-amber-200',
+    label: 'Lunch Room',
+    icon: Coffee,
+  },
+  PASSAGE: {
+    bg: 'bg-blue-50 text-blue-700',
+    text: 'text-blue-700',
+    border: 'border-blue-200',
+    label: 'Passage',
+    icon: DoorOpen,
+  },
+  OUTSIDE: {
+    bg: 'bg-purple-50 text-purple-700',
+    text: 'text-purple-700',
+    border: 'border-purple-200',
+    label: 'Outside Office',
+    icon: LogOut,
+  },
+  UNKNOWN: {
+    bg: 'bg-slate-100 text-slate-600',
+    text: 'text-slate-600',
+    border: 'border-slate-200',
+    label: 'Unknown / Unobserved',
+    icon: HelpCircle,
+  },
 };
 
-type Tip = { x: number; y: number; lines: string[] } | null;
+export default function WorkHoursDailyTrackingPage() {
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [employees, setEmployees] = useState<DailyTrackingItem[]>([]);
+  const [summary, setSummary] = useState<DailyTrackingSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
-function useTooltip() {
-  const [tip, setTip] = useState<Tip>(null);
-  const show = (e: React.MouseEvent, lines: string[]) => setTip({ x: e.clientX, y: e.clientY, lines });
-  const hide = () => setTip(null);
-  const node = tip && (
-    <div
-      className="fixed z-50 pointer-events-none px-2.5 py-1.5 rounded-md bg-slate-900 text-white text-[11px] shadow-lg"
-      style={{ left: tip.x + 12, top: tip.y + 12 }}
-    >
-      {tip.lines.map((l, i) => (
-        <div key={i} className={i === 0 ? 'font-semibold' : 'text-slate-300'}>
-          {l}
-        </div>
-      ))}
-    </div>
-  );
-  return { show, hide, node };
-}
+  // Selected Employee Detail Modal
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+  const [employeeDetail, setEmployeeDetail] = useState<DailyEmployeeDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
-function StateBadge({ state }: { state: WorkDayRow['state'] }) {
-  if (state === 'IN_OFFICE')
-    return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> In office
-      </span>
-    );
-  if (state === 'LEFT')
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-50 text-slate-600 border border-slate-200">
-        <LogOut className="w-3 h-3" /> Left
-      </span>
-    );
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold text-slate-400 border border-slate-200">
-      <UserX className="w-3 h-3" /> Absent
-    </span>
-  );
-}
+  // Admin Manual Correction Dialog
+  const [correctionInterval, setCorrectionInterval] = useState<{ id: string; zoneId: string } | null>(null);
+  const [newZoneId, setNewZoneId] = useState('WORK_ROOM');
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [correctionSubmitting, setCorrectionSubmitting] = useState(false);
+  const [correctionError, setCorrectionError] = useState<string | null>(null);
 
-function Meter({ value, max }: { value: number; max: number | null }) {
-  if (!max) return null;
-  const pct = Math.min(100, Math.round((value / max) * 100));
-  return (
-    <div className="mt-1 flex items-center gap-2" title={`${pct}% of the ${fmt(max)} schedule`}>
-      <div className="h-1.5 w-24 rounded-full overflow-hidden" style={{ background: TRACK }}>
-        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: INSIDE }} />
-      </div>
-      <span className="text-[10px] text-slate-400">{pct}% of {fmt(max)}</span>
-    </div>
-  );
-}
+  // End of Day Report Modal
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportData, setReportData] = useState<DailyTrackingReport | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
 
-function Kpi({ label, value, icon: Icon }: { label: string; value: React.ReactNode; icon: React.ElementType }) {
-  return (
-    <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-      <div>
-        <p className="text-[11px] font-semibold text-slate-500 uppercase">{label}</p>
-        <h4 className="text-xl font-bold text-slate-900 mt-0.5">{value}</h4>
-      </div>
-      <div className="w-9 h-9 rounded-lg bg-slate-50 text-slate-500 flex items-center justify-center">
-        <Icon className="w-5 h-5" />
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- daily view
-
-function Timeline({
-  row,
-  window,
-  nowMin,
-  tooltip,
-}: {
-  row: WorkDayRow;
-  window: [number, number];
-  nowMin: number | null;
-  tooltip: ReturnType<typeof useTooltip>;
-}) {
-  const [lo, hi] = window;
-  const pos = (m: number) => `${((Math.min(Math.max(m, lo), hi) - lo) / (hi - lo)) * 100}%`;
-  const width = (a: number, b: number) => `${Math.max(0.6, ((Math.min(b, hi) - Math.max(a, lo)) / (hi - lo)) * 100)}%`;
-
-  const manual = !row.measured && row.checkIn && row.lastSeen;
-  return (
-    <div className="relative h-5 rounded" style={{ background: TRACK }}>
-      {row.sessions.map((s, i) => (
-        <div
-          key={i}
-          className="absolute top-0.5 bottom-0.5 rounded-[3px] cursor-default"
-          style={{ left: pos(minutesOfDay(s.start)), width: width(minutesOfDay(s.start), minutesOfDay(s.end)), background: INSIDE }}
-          onMouseMove={(e) => tooltip.show(e, [`Inside ${fmt(s.minutes)}`, `${time(s.start)} – ${time(s.end)}`])}
-          onMouseLeave={tooltip.hide}
-        />
-      ))}
-      {manual && (
-        <div
-          className="absolute top-0.5 bottom-0.5 rounded-[3px] border border-slate-300"
-          style={{
-            left: pos(minutesOfDay(row.checkIn!)),
-            width: width(minutesOfDay(row.checkIn!), minutesOfDay(row.lastSeen!)),
-            background: 'repeating-linear-gradient(135deg, #cbd5e1 0 3px, transparent 3px 7px)',
-          }}
-          onMouseMove={(e) =>
-            tooltip.show(e, [`Manual entry ${fmt(row.spanMinutes)}`, `${time(row.checkIn)} – ${time(row.lastSeen)}`, 'Not measured by camera'])
-          }
-          onMouseLeave={tooltip.hide}
-        />
-      )}
-      {nowMin !== null && nowMin > lo && nowMin < hi && (
-        <div className="absolute -top-0.5 -bottom-0.5 w-px bg-slate-400" style={{ left: pos(nowMin) }} />
-      )}
-    </div>
-  );
-}
-
-function DailyView() {
-  const [date, setDate] = useState(localDate());
-  const [res, setRes] = useState<Awaited<ReturnType<typeof workHoursApi.daily>> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const tooltip = useTooltip();
-
-  const load = useCallback(async () => {
+  // Load Main Daily Tracking Data
+  const fetchData = useCallback(async (showIndicator = false) => {
     try {
-      setRes(await workHoursApi.daily(date));
-      setError(null);
-    } catch (e: any) {
-      setError(e.message);
+      if (showIndicator) setIsRefreshing(true);
+      const [trackingRes, summaryRes] = await Promise.all([
+        api.getDailyTracking(selectedDate),
+        api.getDailyTrackingSummary(selectedDate),
+      ]);
+      if (trackingRes.success) {
+        setEmployees(trackingRes.data || []);
+      }
+      if (summaryRes.success) {
+        setSummary(summaryRes.summary);
+      }
+    } catch (err) {
+      console.error('Failed to fetch daily tracking:', err);
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
     }
-  }, [date]);
+  }, [selectedDate]);
 
   useEffect(() => {
-    load();
-    const t = setInterval(load, 60000); // live-ish: hours grow as people are seen
-    return () => clearInterval(t);
-  }, [load]);
+    fetchData();
+  }, [fetchData]);
 
-  const rows = useMemo(
-    () =>
-      [...(res?.data ?? [])].sort(
-        (a, b) => ['IN_OFFICE', 'LEFT', 'ABSENT'].indexOf(a.state) - ['IN_OFFICE', 'LEFT', 'ABSENT'].indexOf(b.state) || b.insideMinutes - a.insideMinutes
-      ),
-    [res]
-  );
+  // Real-time polling every 5 seconds for live day
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(() => {
+      fetchData(false);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [autoRefresh, fetchData]);
 
-  // Shared time axis: at least 07:00–19:00, widened to fit everyone's day.
-  const window = useMemo<[number, number]>(() => {
-    let lo = 7 * 60, hi = 19 * 60;
-    rows.forEach((r) => {
-      if (r.checkIn) lo = Math.min(lo, minutesOfDay(r.checkIn));
-      if (r.lastSeen) hi = Math.max(hi, minutesOfDay(r.lastSeen) + 1);
-    });
-    return [Math.floor(lo / 60) * 60, Math.ceil(hi / 60) * 60];
-  }, [rows]);
-  const ticks = [];
-  for (let m = window[0]; m <= window[1]; m += 120) ticks.push(m);
-  const nowMin = res?.isToday ? minutesOfDay(new Date().toISOString()) : null;
+  // Load Individual Employee Detail
+  const openEmployeeDetail = async (empId: string) => {
+    setSelectedEmployeeId(empId);
+    setDetailLoading(true);
+    try {
+      const res = await api.getDailyEmployeeDetail(empId, selectedDate);
+      if (res.success) {
+        setEmployeeDetail(res);
+      }
+    } catch (err) {
+      console.error('Failed to fetch employee detail:', err);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
-  const s = res?.summary;
+  // Open End of Day Report Modal
+  const openReportModal = async () => {
+    setShowReportModal(true);
+    setReportLoading(true);
+    try {
+      const res = await api.getDailyTrackingReport(selectedDate);
+      if (res.success) {
+        setReportData(res);
+      }
+    } catch (err) {
+      console.error('Failed to load report:', err);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  // Submit Admin Manual Correction
+  const handleCorrectionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmployeeId || !correctionInterval) return;
+    if (!correctionReason.trim() || correctionReason.trim().length < 5) {
+      setCorrectionError('A descriptive reason of at least 5 characters is mandatory.');
+      return;
+    }
+
+    setCorrectionSubmitting(true);
+    setCorrectionError(null);
+    try {
+      const res = await api.correctZoneInterval(selectedEmployeeId, {
+        intervalId: correctionInterval.id,
+        newZoneId: newZoneId,
+        reason: correctionReason.trim(),
+      });
+      if (res.success) {
+        setCorrectionInterval(null);
+        setCorrectionReason('');
+        // Refresh details and overview
+        openEmployeeDetail(selectedEmployeeId);
+        fetchData(false);
+      }
+    } catch (err: any) {
+      setCorrectionError(err.message || 'Correction failed.');
+    } finally {
+      setCorrectionSubmitting(false);
+    }
+  };
+
+  // Export Report to CSV
+  const handleExportCSV = () => {
+    if (!reportData || !reportData.records) return;
+    const headers = [
+      'Employee Code',
+      'Employee Name',
+      'Department',
+      'First Arrival',
+      'Official Check-In',
+      'Official Check-Out',
+      'Attendance Status',
+      'Working Room',
+      'Lunch Room',
+      'Outside Office',
+      'Unknown Duration',
+      'Total Observed',
+      'Official Attendance',
+    ];
+    const rows = reportData.records.map((r) => [
+      `"${r.employeeCode}"`,
+      `"${r.employeeName}"`,
+      `"${r.department}"`,
+      `"${r.firstObservedAt ? new Date(r.firstObservedAt).toLocaleTimeString() : 'N/A'}"`,
+      `"${r.attendanceCheckInAt ? new Date(r.attendanceCheckInAt).toLocaleTimeString() : 'N/A'}"`,
+      `"${r.attendanceCheckOutAt ? new Date(r.attendanceCheckOutAt).toLocaleTimeString() : 'Open'}"`,
+      `"${r.attendanceStatus}"`,
+      `"${r.workRoomDuration}"`,
+      `"${r.lunchRoomDuration}"`,
+      `"${r.outsideDuration}"`,
+      `"${r.unknownDuration}"`,
+      `"${r.totalObservedDuration}"`,
+      `"${r.officialAttendanceDuration}"`,
+    ]);
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `WorkSight_Daily_Report_${selectedDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Kpi label="In office now" value={res?.isToday ? s?.inOfficeNow ?? '—' : '—'} icon={Building2} />
-        <Kpi label="Present" value={s ? `${s.present} / ${s.employees}` : '—'} icon={Users} />
-        <Kpi label="Avg time inside" value={s ? fmt(s.avgInsideMinutes) : '—'} icon={Timer} />
-        <Kpi label="Total time inside" value={s ? fmt(s.totalInsideMinutes) : '—'} icon={Timer} />
-      </div>
+    <>
+      <Header
+        title="Daily Employee Tracking & Working-Hour Calculation"
+        subtitle="Real-time multi-zone duration tracking, movement auditing, and verified hybrid attendance"
+      />
 
-      <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-bold text-slate-900">Time inside the office</h3>
-            <input
-              type="date"
-              value={date}
-              max={localDate()}
-              onChange={(e) => e.target.value && setDate(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700"
-            />
-          </div>
-          <div className="flex items-center gap-4 text-[11px] text-slate-500">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-3 h-2.5 rounded-sm" style={{ background: INSIDE }} /> Inside (camera)
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className="w-3 h-2.5 rounded-sm border border-slate-300"
-                style={{ background: 'repeating-linear-gradient(135deg, #cbd5e1 0 2px, transparent 2px 4px)' }}
+      <main className="p-8 space-y-8 max-w-7xl mx-auto">
+        {/* Top Control Bar: Date Selector & Actions */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-4 w-full md:w-auto">
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2">
+              <Calendar className="w-4 h-4 text-slate-500" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="bg-transparent text-sm font-semibold text-slate-800 focus:outline-none"
               />
-              Manual entry (not measured)
-            </span>
-            {res?.isToday && (
-              <span className="inline-flex items-center gap-1.5">
-                <span className="w-px h-3 bg-slate-400" /> Now
-              </span>
-            )}
+            </div>
+            <button
+              onClick={() => setSelectedDate(new Date().toISOString().slice(0, 10))}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-colors ${
+                selectedDate === new Date().toISOString().slice(0, 10)
+                  ? 'bg-blue-50 text-blue-700 border-blue-200'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              Today
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+            <button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 border transition-colors ${
+                autoRefresh
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-slate-50 text-slate-600 border-slate-200'
+              }`}
+              title="Automatically refresh live tracking durations every 5s"
+            >
+              <span className={`w-2 h-2 rounded-full ${autoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+              <span>Live Auto-Refresh: {autoRefresh ? 'ON (5s)' : 'PAUSED'}</span>
+            </button>
+
+            <button
+              onClick={() => fetchData(true)}
+              disabled={isRefreshing}
+              className="p-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 transition-colors"
+              title="Refresh tracking data"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
+            </button>
+
+            <Link
+              href="/dashboard/work-hours/history"
+              className="px-4 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            >
+              <Users className="w-4 h-4 text-blue-600" />
+              <span>Employee History</span>
+            </Link>
+
+            <button
+              onClick={openReportModal}
+              className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-sm flex items-center gap-2 transition-colors"
+            >
+              <FileText className="w-4 h-4" />
+              <span>End-of-Day Report</span>
+            </button>
           </div>
         </div>
 
-        {error && <p className="px-6 py-3 text-xs text-rose-600">{error}</p>}
+        {/* Aggregate KPI Summary Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {/* Monitored Employees */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm">
+            <div className="flex items-center justify-between text-slate-500 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Monitored</span>
+              <Users className="w-4 h-4 text-blue-600" />
+            </div>
+            <p className="text-2xl font-bold text-slate-900">
+              {summary ? summary.totalTrackedEmployees : employees.filter((e) => e.hasTrackingSession).length}
+              <span className="text-xs font-normal text-slate-400 ml-1">/ {employees.length}</span>
+            </p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Enrolled employees</p>
+          </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs min-w-[900px]">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
-              <tr>
-                <th className="py-3 px-4">Employee</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4">First in</th>
-                <th className="py-3 px-4">Last seen</th>
-                <th className="py-3 px-4">Time inside</th>
-                <th className="py-3 px-4">Away</th>
-                <th className="py-3 px-4 w-[34%]">
-                  <div className="relative h-3">
-                    {ticks.map((m) => (
-                      <span
-                        key={m}
-                        className="absolute -translate-x-1/2 font-normal normal-case tracking-normal text-[10px] text-slate-400"
-                        style={{ left: `${((m - window[0]) / (window[1] - window[0])) * 100}%` }}
-                      >
-                        {String(Math.floor(m / 60)).padStart(2, '0')}:00
-                      </span>
-                    ))}
-                  </div>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {!res ? (
-                <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">Loading…</td>
+          {/* Working Room Occupancy */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm">
+            <div className="flex items-center justify-between text-emerald-600 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Working Room</span>
+              <Building2 className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-bold text-slate-900">
+              {summary ? summary.currentlyInWorkingRoom : employees.filter((e) => e.currentZoneId === 'WORK_ROOM').length}
+            </p>
+            <p className="text-[11px] text-emerald-600 font-medium mt-0.5">Desks active</p>
+          </div>
+
+          {/* Lunch Room Occupancy */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm">
+            <div className="flex items-center justify-between text-amber-600 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Lunch Room</span>
+              <Coffee className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-bold text-slate-900">
+              {summary ? summary.currentlyInLunchRoom : employees.filter((e) => e.currentZoneId === 'LUNCH_ROOM').length}
+            </p>
+            <p className="text-[11px] text-amber-600 font-medium mt-0.5">Dining / Break</p>
+          </div>
+
+          {/* Outside Office */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm">
+            <div className="flex items-center justify-between text-purple-600 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Outside Office</span>
+              <LogOut className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-bold text-slate-900">
+              {summary ? summary.currentlyOutside : employees.filter((e) => e.currentZoneId === 'OUTSIDE').length}
+            </p>
+            <p className="text-[11px] text-purple-600 font-medium mt-0.5">Out of building</p>
+          </div>
+
+          {/* Total Working Room Hours */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm">
+            <div className="flex items-center justify-between text-blue-600 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Total Work Time</span>
+              <Clock className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-bold text-slate-900">{summary?.totalWorkingRoomFormatted || '0m'}</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Observed in Work Room</p>
+          </div>
+
+          {/* Official Attendance Total */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm">
+            <div className="flex items-center justify-between text-indigo-600 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">Total Attendance</span>
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-bold text-slate-900">{summary?.totalAttendanceFormatted || '0m'}</p>
+            <p className="text-[11px] text-indigo-600 font-medium mt-0.5">Payroll Check-in</p>
+          </div>
+        </div>
+
+        {/* DAILY EMPLOYEE TRACKING SECTION */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">
+                  Daily Employee Tracking
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Individual persistent tracking sessions tied to permanent Employee UUIDs with live server-side zone durations.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs text-slate-500">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Observed &lt;60s
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                Stale &gt;60s (Unknown)
+              </span>
+            </div>
+          </div>
+
+          {/* Table / Grid */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/75 text-[11px] font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200/80">
+                  <th className="py-3.5 px-6">Employee</th>
+                  <th className="py-3.5 px-4">Current Verified Zone</th>
+                  <th className="py-3.5 px-4">Freshness</th>
+                  <th className="py-3.5 px-4">Arrival / Check-In</th>
+                  <th className="py-3.5 px-4">Working Room</th>
+                  <th className="py-3.5 px-4">Lunch Room</th>
+                  <th className="py-3.5 px-4">Outside</th>
+                  <th className="py-3.5 px-4">Unknown</th>
+                  <th className="py-3.5 px-4">Official Att.</th>
+                  <th className="py-3.5 px-6 text-right">Actions</th>
                 </tr>
-              ) : (
-                rows.map((r) => (
-                  <tr key={r.employee.id} className="hover:bg-slate-50/60">
-                    <td className="py-3 px-4">
-                      <p className="font-semibold text-slate-900">{r.employee.fullName}</p>
-                      <p className="text-[11px] text-slate-400">{r.employee.department ?? r.employee.employeeCode}</p>
-                    </td>
-                    <td className="py-3 px-4"><StateBadge state={r.state} /></td>
-                    <td className="py-3 px-4 font-mono">
-                      {time(r.checkIn)}
-                      {r.isLate && <span className="ml-1 text-[10px] text-amber-700 font-sans font-semibold">late</span>}
-                    </td>
-                    <td className="py-3 px-4 font-mono">{time(r.lastSeen)}</td>
-                    <td className="py-3 px-4">
-                      <span className="font-semibold text-slate-900">{fmt(r.insideMinutes)}</span>
-                      {r.date && !r.measured && <span className="ml-1 text-[10px] text-slate-400">manual</span>}
-                      {r.date && <Meter value={r.insideMinutes} max={r.scheduledMinutes} />}
-                    </td>
-                    <td className="py-3 px-4 text-slate-500">{r.measured ? fmt(r.awayMinutes) : '—'}</td>
-                    <td className="py-3 px-4">
-                      <Timeline row={r} window={window} nowMin={nowMin} tooltip={tooltip} />
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {employees.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="py-12 text-center text-slate-400 text-sm">
+                      No employees registered in the system.
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        {res && (
-          <p className="px-6 py-3 border-t border-slate-100 text-[11px] text-slate-400 flex items-start gap-1.5">
-            <Info className="w-3.5 h-3.5 shrink-0 mt-px" />
-            Time inside adds up the periods the camera saw each person. A gap of more than {res.settings.presenceGapMin} minutes
-            without a sighting counts as away. Point a camera lens at the work area, not only the door, so people are seen while
-            at their desks.
-          </p>
-        )}
-      </div>
-      {tooltip.node}
-    </div>
-  );
-}
+                ) : (
+                  employees.map((emp) => {
+                    const zoneConf = ZONE_COLORS[emp.currentZoneId] || ZONE_COLORS.UNKNOWN;
+                    const ZoneIcon = zoneConf.icon;
+                    const durs = emp.durations;
 
-// ---------------------------------------------------------------- period view
+                    return (
+                      <tr
+                        key={emp.employeeId}
+                        className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
+                        onClick={() => openEmployeeDetail(emp.employeeId)}
+                      >
+                        {/* Employee Name & Code */}
+                        <td className="py-4 px-6">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-bold flex items-center justify-center text-xs shadow-sm flex-shrink-0">
+                              {emp.employeeName
+                                .split(' ')
+                                .map((n) => n[0])
+                                .slice(0, 2)
+                                .join('')}
+                            </div>
+                            <div>
+                              <p className="font-semibold text-slate-900 group-hover:text-blue-600 transition-colors">
+                                {emp.employeeName}
+                              </p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="font-mono text-xs text-slate-500 font-medium">
+                                  {emp.employeeCode}
+                                </span>
+                                <span className="text-[10px] text-slate-400">• {emp.departmentName}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
 
-const PRESETS: { key: string; label: string; range: () => [Date, Date] }[] = [
-  {
-    key: 'week',
-    label: 'This week',
-    range: () => {
-      const now = new Date();
-      const start = new Date(now);
-      start.setDate(now.getDate() - ((now.getDay() + 6) % 7)); // Monday
-      return [start, now];
-    },
-  },
-  { key: '7d', label: 'Last 7 days', range: () => { const n = new Date(); const s = new Date(n); s.setDate(n.getDate() - 6); return [s, n]; } },
-  { key: 'month', label: 'This month', range: () => { const n = new Date(); return [new Date(n.getFullYear(), n.getMonth(), 1), n]; } },
-  {
-    key: 'lastmonth',
-    label: 'Last month',
-    range: () => { const n = new Date(); return [new Date(n.getFullYear(), n.getMonth() - 1, 1), new Date(n.getFullYear(), n.getMonth(), 0)]; },
-  },
-];
+                        {/* Current Verified Zone */}
+                        <td className="py-4 px-4">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${zoneConf.bg} ${zoneConf.border}`}
+                          >
+                            <ZoneIcon className="w-3.5 h-3.5" />
+                            <span>{zoneConf.label}</span>
+                          </span>
+                        </td>
 
-function PeriodView() {
-  const [preset, setPreset] = useState('week');
-  const [range, setRange] = useState<[string, string]>(() => PRESETS[0].range().map(localDate) as [string, string]);
-  const [res, setRes] = useState<Awaited<ReturnType<typeof workHoursApi.summary>> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const tooltip = useTooltip();
+                        {/* Freshness Badge */}
+                        <td className="py-4 px-4">
+                          {emp.currentObservationStatus === 'OBSERVED_RECENTLY' ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 font-medium">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                              Live ({durs.secondsSinceLastSeen}s ago)
+                            </span>
+                          ) : emp.currentObservationStatus === 'NOT_RECENTLY_OBSERVED' ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 font-medium">
+                              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                              Stale ({Math.round(durs.secondsSinceLastSeen / 60)}m ago)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+                              <span className="w-2 h-2 rounded-full bg-slate-300"></span>
+                              Not Seen Today
+                            </span>
+                          )}
+                        </td>
 
-  useEffect(() => {
-    setRes(null);
-    workHoursApi
-      .summary(range[0], range[1])
-      .then((r) => { setRes(r); setError(null); })
-      .catch((e) => setError(e.message));
-  }, [range]);
+                        {/* First Arrival & Check-In */}
+                        <td className="py-4 px-4 text-xs font-medium text-slate-700">
+                          <div>
+                            <span className="text-slate-400 text-[10px] block">First Arrival:</span>
+                            {emp.firstObservedAt
+                              ? new Date(emp.firstObservedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                              : '—'}
+                          </div>
+                          {emp.attendanceCheckInAt && (
+                            <div className="mt-1 text-[11px] text-emerald-600 font-medium">
+                              Check-In: {new Date(emp.attendanceCheckInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          )}
+                        </td>
 
-  const pick = (key: string) => {
-    setPreset(key);
-    setRange(PRESETS.find((p) => p.key === key)!.range().map(localDate) as [string, string]);
-  };
+                        {/* Working Room Duration */}
+                        <td className="py-4 px-4 font-semibold text-slate-900 font-mono text-xs">
+                          <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                            {durs.workRoomFormatted}
+                          </span>
+                        </td>
 
-  const rows = useMemo(() => [...(res?.data ?? [])].sort((a, b) => b.totalInsideMinutes - a.totalInsideMinutes), [res]);
-  const dayMax = Math.max(60, ...rows.flatMap((r) => r.days.map((d) => d.insideMinutes)));
+                        {/* Lunch Room Duration */}
+                        <td className="py-4 px-4 font-semibold text-slate-800 font-mono text-xs">
+                          {durs.lunchRoomSeconds > 0 ? (
+                            <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
+                              {durs.lunchRoomFormatted}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
 
-  const exportCsv = () => {
-    if (!res) return;
-    const header = ['Employee', 'Employee ID', 'Department', 'Days present', 'Late days', 'Total inside (h)', 'Avg inside per day (h)', 'First-in to last-seen (h)', ...res.dates];
-    const lines = rows.map((r) => [
-      r.employee.fullName,
-      r.employee.employeeCode,
-      r.employee.department ?? '',
-      r.daysPresent,
-      r.lateDays,
-      (r.totalInsideMinutes / 60).toFixed(2),
-      (r.avgInsideMinutes / 60).toFixed(2),
-      (r.totalSpanMinutes / 60).toFixed(2),
-      ...r.days.map((d) => (d.insideMinutes / 60).toFixed(2)),
-    ]);
-    const csv = [header, ...lines].map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    a.download = `work-hours_${res.startDate}_to_${res.endDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
+                        {/* Outside Office Duration */}
+                        <td className="py-4 px-4 font-semibold text-slate-800 font-mono text-xs">
+                          {durs.outsideOfficeSeconds > 0 ? (
+                            <span className="text-purple-700 bg-purple-50 px-2 py-0.5 rounded">
+                              {durs.outsideOfficeFormatted}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
 
-  return (
-    <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
-      <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex gap-1 p-1 bg-slate-100 rounded-lg text-xs font-semibold">
-            {PRESETS.map((p) => (
-              <button
-                key={p.key}
-                onClick={() => pick(p.key)}
-                className={`px-2.5 py-1 rounded-md ${preset === p.key ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'}`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-          <input
-            type="date"
-            value={range[0]}
-            onChange={(e) => { setPreset(''); e.target.value && setRange([e.target.value, range[1]]); }}
-            className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs"
-          />
-          <span className="text-xs text-slate-400">to</span>
-          <input
-            type="date"
-            value={range[1]}
-            onChange={(e) => { setPreset(''); e.target.value && setRange([range[0], e.target.value]); }}
-            className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs"
-          />
-        </div>
-        <button
-          onClick={exportCsv}
-          disabled={!res}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-        >
-          <Download className="w-3.5 h-3.5" /> Export CSV
-        </button>
-      </div>
+                        {/* Unknown Duration */}
+                        <td className="py-4 px-4 font-semibold text-slate-800 font-mono text-xs">
+                          {durs.unknownSeconds > 0 ? (
+                            <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded">
+                              {durs.unknownFormatted}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">0m</span>
+                          )}
+                        </td>
 
-      {error && <p className="px-6 py-3 text-xs text-rose-600">{error}</p>}
+                        {/* Total Attendance */}
+                        <td className="py-4 px-4 font-bold text-slate-900 font-mono text-xs">
+                          {durs.officialAttendanceSeconds > 0 ? (
+                            durs.officialAttendanceFormatted
+                          ) : (
+                            <span className="text-slate-400 font-normal">Pending</span>
+                          )}
+                        </td>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs min-w-[860px]">
-          <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
-            <tr>
-              <th className="py-3 px-4">Employee</th>
-              <th className="py-3 px-4">Days present</th>
-              <th className="py-3 px-4">Total inside</th>
-              <th className="py-3 px-4">Avg per day</th>
-              <th className="py-3 px-4">Late days</th>
-              <th className="py-3 px-4">Time inside per day</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 text-slate-700">
-            {!res ? (
-              <tr><td colSpan={6} className="py-8 text-center text-slate-400">Loading…</td></tr>
-            ) : (
-              rows.map((r) => (
-                <tr key={r.employee.id} className="hover:bg-slate-50/60">
-                  <td className="py-3 px-4">
-                    <p className="font-semibold text-slate-900">{r.employee.fullName}</p>
-                    <p className="text-[11px] text-slate-400">{r.employee.department ?? r.employee.employeeCode}</p>
-                  </td>
-                  <td className="py-3 px-4">{r.daysPresent}</td>
-                  <td className="py-3 px-4 font-semibold text-slate-900">{fmt(r.totalInsideMinutes)}</td>
-                  <td className="py-3 px-4">
-                    {fmt(r.avgInsideMinutes)}
-                    {r.daysPresent > 0 && <Meter value={r.avgInsideMinutes} max={r.scheduledMinutesPerDay} />}
-                  </td>
-                  <td className="py-3 px-4">{r.lateDays || '—'}</td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-end gap-[2px] h-8">
-                      {r.days.map((d) => (
-                        <div
-                          key={d.date}
-                          className="flex-1 min-w-[4px] max-w-[18px] h-full flex items-end cursor-default"
-                          onMouseMove={(e) =>
-                            tooltip.show(e, [
-                              new Date(d.date + 'T00:00').toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }),
-                              d.insideMinutes ? `Inside ${fmt(d.insideMinutes)}` : 'Not present',
-                            ])
-                          }
-                          onMouseLeave={tooltip.hide}
-                        >
-                          <div
-                            className="w-full rounded-t-[3px]"
-                            style={{
-                              height: d.insideMinutes ? `${Math.max(8, (d.insideMinutes / dayMax) * 100)}%` : '2px',
-                              background: d.insideMinutes ? INSIDE : '#e2e8f0',
+                        {/* Action: Open Timeline */}
+                        <td className="py-4 px-6 text-right">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEmployeeDetail(emp.employeeId);
                             }}
-                          />
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors inline-flex items-center gap-1 text-xs font-semibold"
+                          >
+                            <span>Details</span>
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+
+      {/* INDIVIDUAL EMPLOYEE DETAIL MODAL / DRAWER */}
+      {selectedEmployeeId && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end">
+          <div className="w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto flex flex-col">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-200 flex items-center justify-between sticky top-0 bg-white/95 backdrop-blur z-10">
+              <div>
+                <span className="text-[10px] font-semibold text-blue-600 uppercase tracking-wider">
+                  Employee Daily Profile & Tracking Audit
+                </span>
+                <h3 className="text-xl font-bold text-slate-900 mt-0.5">
+                  {employeeDetail?.employee.name || 'Loading...'}
+                </h3>
+                <p className="text-xs text-slate-500 font-mono mt-0.5">
+                  ID: {employeeDetail?.employee.id} • Code: {employeeDetail?.employee.code}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedEmployeeId(null);
+                  setEmployeeDetail(null);
+                }}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            {detailLoading ? (
+              <div className="p-12 flex flex-col items-center justify-center text-slate-400 gap-3">
+                <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
+                <p className="text-sm">Loading chronological movement telemetry...</p>
+              </div>
+            ) : !employeeDetail ? (
+              <div className="p-8 text-center text-slate-500">Failed to load telemetry.</div>
+            ) : (
+              <div className="p-6 space-y-6 flex-1">
+                {/* Zone Duration Breakdown Visual Bar */}
+                <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200/80">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
+                    Zone Duration Breakdown ({employeeDetail.workDate})
+                  </h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                    <div className="bg-white p-3 rounded-xl border border-slate-200">
+                      <span className="text-[10px] text-emerald-700 font-semibold uppercase">Working Room</span>
+                      <p className="text-lg font-bold text-slate-900 mt-1">{employeeDetail.durations.workRoomFormatted}</p>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-slate-200">
+                      <span className="text-[10px] text-amber-700 font-semibold uppercase">Lunch Room</span>
+                      <p className="text-lg font-bold text-slate-900 mt-1">{employeeDetail.durations.lunchRoomFormatted}</p>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-slate-200">
+                      <span className="text-[10px] text-purple-700 font-semibold uppercase">Outside Office</span>
+                      <p className="text-lg font-bold text-slate-900 mt-1">{employeeDetail.durations.outsideOfficeFormatted}</p>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-slate-200">
+                      <span className="text-[10px] text-rose-700 font-semibold uppercase">Unknown Time</span>
+                      <p className="text-lg font-bold text-slate-900 mt-1">{employeeDetail.durations.unknownFormatted}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Chronological Doorway Movement Timeline */}
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center justify-between mb-4">
+                    <span>Verified Movement Events ({employeeDetail.timeline.length})</span>
+                    <span className="text-[11px] font-normal text-slate-400">Directional Line Crossings</span>
+                  </h4>
+
+                  {employeeDetail.timeline.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-xl text-xs border border-dashed border-slate-200">
+                      No doorway movements recorded for this date.
+                    </div>
+                  ) : (
+                    <div className="space-y-3 relative before:absolute before:inset-0 before:left-3.5 before:w-0.5 before:bg-slate-200">
+                      {employeeDetail.timeline.map((m, idx) => (
+                        <div key={m.id || idx} className="relative flex items-start gap-4 pl-8">
+                          <span className="absolute left-2 top-1.5 w-3.5 h-3.5 rounded-full bg-blue-600 border-2 border-white shadow-sm" />
+                          <div className="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-sm flex-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-900">{m.eventType}</span>
+                              <span className="text-[11px] text-slate-500 font-mono">
+                                {new Date(m.timestamp).toLocaleTimeString()}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex items-center gap-2 text-xs text-slate-600">
+                              <span>
+                                From <b className="text-slate-800">{m.fromZoneId || 'Unknown'}</b> to{' '}
+                                <b className="text-slate-800">{m.toZoneId}</b>
+                              </span>
+                              {m.crossingLineId && (
+                                <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                                  {m.crossingLineId}
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-2 text-[10px] text-slate-400 flex items-center gap-3">
+                              <span>Camera: {m.sourceCameraId || 'Dual Channel 1'}</span>
+                              <span>Confidence: {Math.round((m.verificationConfidence || 1) * 100)}%</span>
+                              {m.cameraTrackId && <span>Track #{m.cameraTrackId}</span>}
+                            </div>
+                          </div>
                         </div>
                       ))}
                     </div>
-                  </td>
-                </tr>
-              ))
+                  )}
+                </div>
+
+                {/* Contiguous Zone Intervals & Admin Correction */}
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center justify-between mb-4">
+                    <span>Contiguous Zone Intervals ({employeeDetail.intervals.length})</span>
+                    <span className="text-[11px] font-normal text-slate-400">Duration Logs</span>
+                  </h4>
+
+                  <div className="space-y-2.5">
+                    {employeeDetail.intervals.map((inv) => (
+                      <div
+                        key={inv.id}
+                        className="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-slate-900">{inv.zoneId}</span>
+                            <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                              {inv.durationFormatted}
+                            </span>
+                            {inv.isOngoing && (
+                              <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded font-semibold">
+                                Ongoing
+                              </span>
+                            )}
+                            {inv.verificationStatus === 'MANUALLY_CORRECTED' && (
+                              <span className="text-[10px] text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded font-semibold">
+                                Corrected
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-1">
+                            {new Date(inv.enteredAt).toLocaleTimeString()} —{' '}
+                            {inv.exitedAt ? new Date(inv.exitedAt).toLocaleTimeString() : 'Current Time'}
+                          </p>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setCorrectionInterval({ id: inv.id, zoneId: inv.zoneId });
+                            setNewZoneId(inv.zoneId === 'WORK_ROOM' ? 'LUNCH_ROOM' : 'WORK_ROOM');
+                            setCorrectionReason('');
+                            setCorrectionError(null);
+                          }}
+                          className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 rounded-lg transition-colors flex items-center gap-1"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>Correct</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             )}
-          </tbody>
-        </table>
-      </div>
-      {tooltip.node}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- page
-
-export default function WorkHoursPage() {
-  const [tab, setTab] = useState<'daily' | 'period'>('daily');
-  return (
-    <>
-      <Header title="Work Hours" subtitle="How long each employee is actually inside the office, measured by the camera" />
-      <main className="p-8 space-y-6">
-        <div className="flex gap-1 p-1 bg-slate-100 rounded-lg text-xs font-semibold w-fit">
-          {(
-            [
-              ['daily', 'Daily'],
-              ['period', 'Weekly / monthly'],
-            ] as const
-          ).map(([k, label]) => (
-            <button
-              key={k}
-              onClick={() => setTab(k)}
-              className={`px-3 py-1.5 rounded-md ${tab === k ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'}`}
-            >
-              {label}
-            </button>
-          ))}
+          </div>
         </div>
-        {tab === 'daily' ? <DailyView /> : <PeriodView />}
-      </main>
+      )}
+
+      {/* ADMIN MANUAL CORRECTION MODAL */}
+      {correctionInterval && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-blue-600" />
+                <span>Administrator Zone Correction</span>
+              </h3>
+              <button
+                onClick={() => setCorrectionInterval(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCorrectionSubmit} className="mt-4 space-y-4">
+              <p className="text-xs text-slate-500">
+                You are modifying a verified camera interval. Corrections are permanently audited with your user ID and mandatory reason.
+              </p>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">New Target Zone</label>
+                <select
+                  value={newZoneId}
+                  onChange={(e) => setNewZoneId(e.target.value)}
+                  className="w-full text-sm font-semibold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="WORK_ROOM">Working Room (Desk Cluster)</option>
+                  <option value="LUNCH_ROOM">Lunch Room (Left Doorway)</option>
+                  <option value="PASSAGE">Shared Passage & Corridor</option>
+                  <option value="OUTSIDE">Outside Office (External)</option>
+                  <option value="UNKNOWN">Unknown / Unobserved</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Mandatory Justification / Reason <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  value={correctionReason}
+                  onChange={(e) => setCorrectionReason(e.target.value)}
+                  placeholder="e.g. Employee attended team sprint planning meeting in lunch room..."
+                  rows={3}
+                  className="w-full text-xs text-slate-800 bg-slate-50 border border-slate-200 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {correctionError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span>{correctionError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCorrectionInterval(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={correctionSubmitting}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl shadow-md flex items-center gap-2"
+                >
+                  {correctionSubmitting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Save Correction & Audit</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* END-OF-DAY REPORT MODAL */}
+      {showReportModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col">
+            <div className="p-6 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">
+                  WorkSight Daily Activity Audit
+                </span>
+                <h3 className="text-xl font-bold text-slate-900 mt-0.5">
+                  End-of-Day Report — {selectedDate}
+                </h3>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleExportCSV}
+                  disabled={!reportData || reportData.records.length === 0}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-sm flex items-center gap-2 transition-colors disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Export CSV</span>
+                </button>
+                <button
+                  onClick={() => setShowReportModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-6 flex-1">
+              {reportLoading ? (
+                <div className="py-16 text-center text-slate-400 flex flex-col items-center gap-3">
+                  <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
+                  <p className="text-sm">Synthesizing end-of-day report...</p>
+                </div>
+              ) : !reportData ? (
+                <p className="text-center text-slate-400">Failed to load report.</p>
+              ) : (
+                <>
+                  {/* Exceptions Summary */}
+                  {reportData.exceptions.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                      <h4 className="text-xs font-bold text-amber-800 uppercase flex items-center gap-2 mb-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600" />
+                        <span>Tracking Exceptions Detected ({reportData.exceptions.length})</span>
+                      </h4>
+                      <ul className="space-y-1.5 text-xs text-amber-800">
+                        {reportData.exceptions.map((ex, i) => (
+                          <li key={i} className="flex items-start gap-2">
+                            <span className="font-bold">• {ex.employeeName}:</span>
+                            <span>{ex.details}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Summary Table */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 text-[11px] font-semibold text-slate-500 uppercase border-b border-slate-200">
+                        <tr>
+                          <th className="p-3">Employee</th>
+                          <th className="p-3">First Arrival</th>
+                          <th className="p-3">Check-In</th>
+                          <th className="p-3">Check-Out</th>
+                          <th className="p-3">Working Room</th>
+                          <th className="p-3">Lunch</th>
+                          <th className="p-3">Outside</th>
+                          <th className="p-3">Unknown</th>
+                          <th className="p-3">Attendance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {reportData.records.map((r) => (
+                          <tr key={r.employeeId} className="hover:bg-slate-50/80">
+                            <td className="p-3 font-semibold text-slate-900">
+                              {r.employeeName}
+                              <span className="block text-[10px] text-slate-400 font-normal">{r.employeeCode}</span>
+                            </td>
+                            <td className="p-3 font-mono">
+                              {r.firstObservedAt ? new Date(r.firstObservedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                            </td>
+                            <td className="p-3 font-mono">
+                              {r.attendanceCheckInAt ? new Date(r.attendanceCheckInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                            </td>
+                            <td className="p-3 font-mono">
+                              {r.attendanceCheckOutAt ? new Date(r.attendanceCheckOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Open'}
+                            </td>
+                            <td className="p-3 font-mono font-semibold text-emerald-700">{r.workRoomDuration}</td>
+                            <td className="p-3 font-mono text-amber-700">{r.lunchRoomDuration}</td>
+                            <td className="p-3 font-mono text-purple-700">{r.outsideDuration}</td>
+                            <td className="p-3 font-mono text-rose-700">{r.unknownDuration}</td>
+                            <td className="p-3 font-mono font-bold text-slate-900">{r.officialAttendanceDuration}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

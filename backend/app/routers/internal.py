@@ -10,10 +10,11 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db, utcnow
 from app.errors import ApiError
-from app.models import Camera, CameraChannel, CameraProviderType, Employee, FaceEnrollment
+from app.models import Camera, CameraChannel, CameraProviderType, Employee, FaceEnrollment, FaceTemplate
 from app.providers.ezviz import ezviz_provider
 from app.security import json_body
 from app.services.attendance import apply_recognition
+from app.crypto import decrypt_embedding
 
 
 def require_service_key(x_service_key: str = Header(default="")) -> None:
@@ -28,16 +29,31 @@ router = APIRouter(prefix="/api/internal", tags=["internal"], dependencies=[Depe
 
 @router.get("/face-gallery")
 def face_gallery(db: Session = Depends(get_db)):
-    """Embeddings of active, enrolled employees."""
-    rows = db.execute(
-        select(FaceEnrollment.employee_id, Employee.full_name, FaceEnrollment.embedding)
-        .join(Employee, Employee.id == FaceEnrollment.employee_id)
-        .where(Employee.is_active.is_(True))
+    """Decrypt and return authorized active face templates."""
+    templates = db.scalars(
+        select(FaceTemplate)
+        .join(Employee, Employee.id == FaceTemplate.employee_id)
+        .where(Employee.is_active.is_(True), FaceTemplate.status == "ACTIVE")
     ).all()
-    return {
-        "success": True,
-        "data": [{"employeeId": e, "fullName": n, "embedding": list(v)} for e, n, v in rows],
-    }
+    
+    data = []
+    if templates:
+        for t in templates:
+            try:
+                emb = decrypt_embedding(
+                    t.encrypted_embedding,
+                    t.embedding_iv,
+                    t.embedding_tag,
+                    t.encryption_key_id,
+                )
+                data.append({
+                    "employeeId": t.employee_id,
+                    "fullName": t.employee.full_name,
+                    "embedding": emb,
+                })
+            except Exception:
+                pass
+    return {"success": True, "data": data}
 
 
 @router.get("/cameras")

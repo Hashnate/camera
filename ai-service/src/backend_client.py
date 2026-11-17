@@ -43,3 +43,15 @@ class BackendClient:
 
     def report_recognition(self, payload: dict) -> dict:
         return self._check(self._http.post("/internal/recognitions", json=payload))
+
+    def report_observation(self, payload: dict) -> dict:
+        return self._check(self._http.post("/internal/presence/observations", json=payload))
+
+    def zone_config(self, camera_id: str, channel_no: int = 1) -> dict:
+        return self._get(f"/cameras/{camera_id}/zone-config", channel=channel_no)
+
+    def report_tracking_event(self, payload: dict) -> dict:
+        return self._check(self._http.post("/internal/tracking/events", json=payload))
+
+    def report_tracking_frame(self, payload: dict) -> dict:
+        return self._check(self._http.post("/internal/tracking/frame", json=payload))

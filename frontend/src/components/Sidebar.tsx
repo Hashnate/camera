@@ -14,15 +14,19 @@ import {
   ShieldCheck,
   Video,
   Timer,
+  MapPin,
+  Coffee,
 } from 'lucide-react';
 import { setStoredToken } from '@/lib/api';
 
 const navigation = [
   { name: 'Overview', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Live Cameras', href: '/dashboard/cameras', icon: Cctv, badge: 'EZVIZ Live' },
+  { name: 'Office Zones', href: '/dashboard/zones', icon: MapPin, badge: 'Tracking' },
   { name: 'Employees', href: '/dashboard/employees', icon: Users },
   { name: 'Attendance', href: '/dashboard/attendance', icon: CalendarCheck },
   { name: 'Work Hours', href: '/dashboard/work-hours', icon: Timer },
+  { name: 'Breaks & Away', href: '/dashboard/breaks', icon: Coffee, badge: 'v2.8' },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
 ];
 

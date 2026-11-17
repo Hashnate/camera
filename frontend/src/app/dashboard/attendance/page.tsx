@@ -1,14 +1,29 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { CalendarCheck, Clock, CheckCircle2, AlertTriangle, UserX, UserCheck, ScanFace, Hand } from 'lucide-react';
+import { CalendarCheck, Clock, CheckCircle2, AlertTriangle, UserX, UserCheck, ScanFace, Hand, LogIn, LogOut, ShieldCheck, Info } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { api } from '@/lib/api';
 import { AutoAttendancePanel } from '@/components/AutoAttendancePanel';
+import { RealTimePresenceBoard } from '@/components/RealTimePresenceBoard';
 
 export default function AttendancePage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [mySession, setMySession] = useState<any>(null);
+  const [sessionActionLoading, setSessionActionLoading] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  const fetchSessionStatus = async () => {
+    try {
+      const res = await api.getMyTodaySession();
+      if (res.success && res.data) {
+        setMySession(res.data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const fetchAttendance = async (silent = false) => {
     try {
@@ -17,10 +32,43 @@ export default function AttendancePage() {
       if (res.success) {
         setData(res);
       }
+      await fetchSessionStatus();
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCheckIn = async () => {
+    try {
+      setSessionActionLoading(true);
+      setActionMessage(null);
+      const res = await api.checkIn(mySession?.employee?.id);
+      if (res.success) {
+        setActionMessage(`Checked in successfully at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+        await fetchAttendance(true);
+      }
+    } catch (err: any) {
+      setActionMessage(err.message || 'Check-in failed');
+    } finally {
+      setSessionActionLoading(false);
+    }
+  };
+
+  const handleCheckOut = async () => {
+    try {
+      setSessionActionLoading(true);
+      setActionMessage(null);
+      const res = await api.checkOut(mySession?.employee?.id);
+      if (res.success) {
+        setActionMessage(`Checked out successfully at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+        await fetchAttendance(true);
+      }
+    } catch (err: any) {
+      setActionMessage(err.message || 'Check-out failed');
+    } finally {
+      setSessionActionLoading(false);
     }
   };
 
@@ -90,6 +138,73 @@ export default function AttendancePage() {
             </div>
           </div>
         </div>
+
+        {/* Employee Work Session Action Station (System B: Official Attendance) */}
+        <div className="bg-gradient-to-r from-slate-900 to-indigo-950 rounded-2xl p-6 text-white shadow-md border border-slate-800">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase bg-blue-500/20 text-blue-300 border border-blue-400/30">
+                  System B — Official Work Session
+                </span>
+                <span className="flex items-center gap-1 text-[11px] text-slate-300">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> Authorized Time Tracking
+                </span>
+              </div>
+              <h2 className="text-xl font-bold text-white">
+                {mySession?.employee?.fullName || 'Employee Attendance Console'}
+              </h2>
+              <p className="text-xs text-slate-400 flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                Face recognition provides observational evidence. Official working hours require explicit Check-In / Check-Out.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {mySession?.openSession ? (
+                <div className="flex items-center gap-4 bg-slate-800/80 px-4 py-2.5 rounded-xl border border-emerald-500/30">
+                  <div className="text-right">
+                    <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider block">Currently Checked In</span>
+                    <span className="text-xs font-mono font-bold text-slate-200">
+                      Since {new Date(mySession.openSession.checkInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleCheckOut}
+                    disabled={sessionActionLoading}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition shadow-sm"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    {sessionActionLoading ? 'Checking out...' : 'Check Out Now'}
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-4 bg-slate-800/80 px-4 py-2.5 rounded-xl border border-slate-700">
+                  <div className="text-right">
+                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Session Status</span>
+                    <span className="text-xs font-bold text-slate-300">Checked Out / Idle</span>
+                  </div>
+                  <button
+                    onClick={handleCheckIn}
+                    disabled={sessionActionLoading}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition shadow-md"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    {sessionActionLoading ? 'Checking in...' : 'Check In Now'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+          {actionMessage && (
+            <div className="mt-3 text-xs px-3 py-1.5 bg-white/10 rounded-lg text-slate-200 border border-white/10">
+              {actionMessage}
+            </div>
+          )}
+        </div>
+
+        {/* Real-Time Office Presence Monitor (System A: Observational Evidence) */}
+        <RealTimePresenceBoard />
 
         <AutoAttendancePanel onActivity={() => fetchAttendance(true)} />
 

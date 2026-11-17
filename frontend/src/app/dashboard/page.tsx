@@ -15,20 +15,41 @@ import {
   Layers,
   MapPin,
   RefreshCw,
+  Building2,
+  Coffee,
+  DoorOpen,
+  HelpCircle,
+  LogOut,
+  ChevronRight,
 } from 'lucide-react';
 import { Header } from '@/components/Header';
-import { api } from '@/lib/api';
+import { api, DailyTrackingItem } from '@/lib/api';
+
+const ZONE_BADGES: Record<string, { label: string; bg: string; border: string; text: string }> = {
+  WORK_ROOM: { label: 'Working Room', bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700' },
+  LUNCH_ROOM: { label: 'Lunch Room', bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700' },
+  PASSAGE: { label: 'Passage', bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' },
+  OUTSIDE: { label: 'Outside Office', bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700' },
+  UNKNOWN: { label: 'Unknown / Stale', bg: 'bg-slate-100', border: 'border-slate-200', text: 'text-slate-600' },
+};
 
 export default function OverviewPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [dailyEmployees, setDailyEmployees] = useState<DailyTrackingItem[]>([]);
 
   const fetchOverview = async () => {
     try {
       setLoading(true);
-      const res = await api.getOverviewStats();
+      const [res, dailyRes] = await Promise.all([
+        api.getOverviewStats(),
+        api.getDailyTrackingLive(),
+      ]);
       if (res.success) {
         setData(res.data);
+      }
+      if (dailyRes.success) {
+        setDailyEmployees(dailyRes.data || []);
       }
     } catch (err) {
       console.error('Failed to load overview:', err);
@@ -39,6 +60,12 @@ export default function OverviewPage() {
 
   useEffect(() => {
     fetchOverview();
+    const interval = setInterval(() => {
+      api.getDailyTrackingLive().then((r) => {
+        if (r.success) setDailyEmployees(r.data || []);
+      }).catch(() => {});
+    }, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   const summary = data?.summary || {
@@ -214,6 +241,124 @@ export default function OverviewPage() {
                 <ArrowUpRight className="w-3.5 h-3.5" />
               </Link>
             </div>
+          </div>
+        </div>
+
+        {/* DAILY EMPLOYEE TRACKING SECTION */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                <h3 className="text-base font-bold text-slate-900 uppercase tracking-wide">
+                  Daily Employee Tracking
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Real-time permanent identity verification, live zone location, and automatic working-hour calculation.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <span className="flex items-center gap-1.5 text-xs text-emerald-600 font-medium">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Live Synchronized
+              </span>
+              <Link
+                href="/dashboard/work-hours"
+                className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+              >
+                <span>Open Working-Hour Console</span>
+                <ChevronRight className="w-4 h-4" />
+              </Link>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50/75 text-[11px] font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200">
+                  <th className="py-3 px-6">Employee</th>
+                  <th className="py-3 px-4">Current Zone</th>
+                  <th className="py-3 px-4">Freshness</th>
+                  <th className="py-3 px-4">First Observed</th>
+                  <th className="py-3 px-4">Official Check-In</th>
+                  <th className="py-3 px-4">Working Room</th>
+                  <th className="py-3 px-4">Lunch Room</th>
+                  <th className="py-3 px-4">Outside</th>
+                  <th className="py-3 px-4">Unknown</th>
+                  <th className="py-3 px-6">Total Attendance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {dailyEmployees.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="py-8 text-center text-slate-400">
+                      No active employee tracking sessions for today.
+                    </td>
+                  </tr>
+                ) : (
+                  dailyEmployees.map((emp) => {
+                    const badge = ZONE_BADGES[emp.currentZoneId] || ZONE_BADGES.UNKNOWN;
+                    const durs = emp.durations;
+
+                    return (
+                      <tr key={emp.employeeId} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3.5 px-6 font-semibold text-slate-900">
+                          <Link href="/dashboard/work-hours" className="hover:text-blue-600">
+                            {emp.employeeName}
+                          </Link>
+                          <span className="block text-[10px] text-slate-400 font-mono font-normal">
+                            {emp.employeeCode} • {emp.departmentName}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-medium border text-[11px] ${badge.bg} ${badge.border} ${badge.text}`}>
+                            {badge.label}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {emp.currentObservationStatus === 'OBSERVED_RECENTLY' ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-600 font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                              Live ({durs.secondsSinceLastSeen}s)
+                            </span>
+                          ) : emp.currentObservationStatus === 'NOT_RECENTLY_OBSERVED' ? (
+                            <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                              Stale ({Math.round(durs.secondsSinceLastSeen / 60)}m)
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">Not seen</span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-slate-600">
+                          {emp.firstObservedAt ? new Date(emp.firstObservedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-slate-600">
+                          {emp.attendanceCheckInAt ? new Date(emp.attendanceCheckInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                        </td>
+                        <td className="py-3.5 px-4 font-mono font-semibold text-emerald-700">
+                          {durs.workRoomFormatted}
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-amber-700">
+                          {durs.lunchRoomSeconds > 0 ? durs.lunchRoomFormatted : '—'}
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-purple-700">
+                          {durs.outsideOfficeSeconds > 0 ? durs.outsideOfficeFormatted : '—'}
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-rose-700">
+                          {durs.unknownSeconds > 0 ? durs.unknownFormatted : '0m'}
+                        </td>
+                        <td className="py-3.5 px-6 font-mono font-bold text-slate-900">
+                          {durs.officialAttendanceSeconds > 0 ? durs.officialAttendanceFormatted : 'Pending'}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </main>

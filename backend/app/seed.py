@@ -97,34 +97,9 @@ def seed(db: Session) -> None:
     admin.password_hash = hash_password("Admin@123456")
     print(f"[Seed] Super Admin created: {admin.email} / Admin@123456")
 
-    # 6. Employees
-    samples = [
-        ("EMP-101", "Alex Morgan", "Senior Full Stack Engineer", "Engineering"),
-        ("EMP-102", "Sarah Chen", "Lead AI Engineer", "Engineering"),
-        ("EMP-103", "David Kim", "UI/UX Product Designer", "Product & Design"),
-        ("EMP-104", "Elena Rostova", "Operations Lead", "Operations"),
-        ("EMP-105", "Marcus Johnson", "HR Generalist", "Human Resources"),
-        ("EMP-106", "Priya Sharma", "Computer Vision Specialist", "Engineering"),
-        ("EMP-107", "James Wilson", "DevOps & Cloud Architect", "Engineering"),
-        ("EMP-108", "Amina Hassan", "Quality Assurance Analyst", "Operations"),
-    ]
-    employees = []
-    for code, name, title, dept in samples:
-        emp = _get_or_create(
-            db,
-            Employee,
-            {"employee_code": code},
-            {
-                "email": f"{name.lower().replace(' ', '.', 1)}@worksight.io",
-                "assigned_zone": "Main Workstation Area",
-                "full_name": name,
-                "job_title": title,
-                "department_id": depts[dept],
-            },
-        )
-        emp.full_name, emp.job_title = name, title
-        emp.department_id, emp.work_schedule_id = depts[dept], schedule.id
-        employees.append(emp)
+    # 6. Employees - Preserves existing real registered employees (no demo records)
+    # Registered employees are managed exclusively via the Register Employee page.
+    employees = db.scalars(select(Employee)).all()
 
     # 7. Office zones, each with a sample occupancy reading when first created
     for name, ztype, cap in [
@@ -161,20 +136,6 @@ def seed(db: Session) -> None:
         ch.channel_name, ch.is_encrypted, ch.status = channel_name, False, 0
 
     print(f"[Seed] EZVIZ Dual-Lens Camera configured: {camera.name} ({camera.serial_number}) with 2 channels")
-
-    # 9. Today's attendance (left alone if already present)
-    today = today_utc()
-    for emp, (h, m), status, late in [
-        (employees[0], (8, 52), AttendanceStatus.PRESENT, False),
-        (employees[1], (8, 58), AttendanceStatus.PRESENT, False),
-        (employees[2], (9, 24), AttendanceStatus.LATE, True),
-    ]:
-        _get_or_create(
-            db,
-            AttendanceRecord,
-            {"employee_id": emp.id, "date": today},
-            {"check_in": _local_time_today_as_utc(h, m), "status": status, "is_late": late},
-        )
 
     db.commit()
     print("[Seed] Database initialization complete!")

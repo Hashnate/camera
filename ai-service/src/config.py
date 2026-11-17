@@ -28,14 +28,14 @@ class Settings:
     # Comma-separated channel numbers to watch, or "all".
     WATCH_CHANNELS = os.getenv("WATCH_CHANNELS", "all")
 
-    FRAME_INTERVAL_SEC = _f("FRAME_INTERVAL_SEC", 0.5)  # analyse ~2 frames/s from live video
+    FRAME_INTERVAL_SEC = _f("FRAME_INTERVAL_SEC", 0.08)  # analyse up to 12.5 frames/s from live video
     SNAPSHOT_INTERVAL_SEC = _f("SNAPSHOT_INTERVAL_SEC", 4.0)  # EZVIZ capture API is rate-limited
     HLS_RETRY_AFTER_SEC = _f("HLS_RETRY_AFTER_SEC", 300)  # after falling back to snapshots
     STREAM_URL_REFRESH_SEC = _f("STREAM_URL_REFRESH_SEC", 1800)
 
-    MIN_FACE_SIZE = int(os.getenv("MIN_FACE_SIZE", "60"))  # pixels
-    MATCH_THRESHOLD = _f("MATCH_THRESHOLD", 0.45)  # cosine similarity
-    MATCH_MARGIN = _f("MATCH_MARGIN", 0.06)  # best must beat other employees by this much
+    MIN_FACE_SIZE = int(os.getenv("MIN_FACE_SIZE", "50"))  # pixels
+    MATCH_THRESHOLD = _f("MATCH_THRESHOLD", 0.46)  # cosine similarity (strict SFace reference)
+    MATCH_MARGIN = _f("MATCH_MARGIN", 0.08)  # best must beat other employees by this much (ambiguity guard)
     CONFIRM_FRAMES = int(os.getenv("CONFIRM_FRAMES", "2"))  # matches needed ...
     CONFIRM_WINDOW_SEC = _f("CONFIRM_WINDOW_SEC", 10)  # ... within this window
     REPORT_COOLDOWN_SEC = _f("REPORT_COOLDOWN_SEC", 60)  # per employee, avoid flooding the backend

@@ -10,14 +10,18 @@ Frames are processed in memory only; nothing is written to disk.
 import logging
 import threading
 import time
+import uuid
 from collections import defaultdict, deque
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from backend_client import BackendClient
 from config import settings
 from face_engine import FaceEngine, Gallery
 from sources import FrameSource, HLSSource, SnapshotSource, open_override_source
+from yolo_detector import YOLOPersonDetector
+from tracking_engine import ZoneTrackingEngine
 
 log = logging.getLogger("ai.worker")
 
@@ -37,6 +41,21 @@ class ChannelWorker(threading.Thread):
         self.hls_disabled_until = 0.0
         self.hls_failures: deque = deque()  # timestamps of recent HLS drop-outs
         self.matches: dict[str, deque] = defaultdict(deque)  # employeeId -> match timestamps
+        self.tracking_engine: Optional[ZoneTrackingEngine] = None
+        self.yolo_detector: Optional[YOLOPersonDetector] = None
+        self.frame_id = 0
+        self.last_track_sync = 0.0
+        self.fps_times: deque = deque(maxlen=20)
+        self.current_fps: float = 0.0
+
+        if channel_no == 1:
+            try:
+                self.yolo_detector = YOLOPersonDetector(conf_threshold=0.30, iou_threshold=0.45)
+                self.tracking_engine = ZoneTrackingEngine(width=1920, height=1080)
+                self._sync_zones()
+            except Exception as e:
+                log.warning("[%s] Could not initialize YOLO person tracking: %s", self.name, e)
+
         self.state = {
             "cameraId": camera["id"],
             "cameraName": camera.get("name"),
@@ -46,8 +65,21 @@ class ChannelWorker(threading.Thread):
             "lastFrameAt": None,
             "framesProcessed": 0,
             "facesDetected": 0,
+            "fps": 0.0,
             "lastError": None,
         }
+
+    def _sync_zones(self) -> None:
+        if not self.tracking_engine:
+            return
+        try:
+            cfg = self.m.client.zone_config(self.camera["id"], self.channel_no)
+            zones = cfg.get("zones", [])
+            lines = cfg.get("lines", [])
+            self.tracking_engine.set_config(zones, lines)
+            log.info("[%s] Synchronized %d office zones and %d crossing lines", self.name, len(zones), len(lines))
+        except Exception as e:
+            log.warning("[%s] Failed to sync zones: %s", self.name, e)
 
     # -------------------------------------------------------------- sources
 
@@ -133,24 +165,146 @@ class ChannelWorker(threading.Thread):
         self._close_source()
 
     def _process(self, frame) -> None:
+        self.frame_id += 1
         now = time.time()
-        faces = self.m.engine.analyze(frame)
+        self.fps_times.append(now)
+        if len(self.fps_times) >= 2:
+            dt = self.fps_times[-1] - self.fps_times[0]
+            self.current_fps = round((len(self.fps_times) - 1) / dt, 1) if dt > 0 else 0.0
+        self.state["fps"] = self.current_fps
         self.state["framesProcessed"] += 1
-        self.state["facesDetected"] += len(faces)
         self.state["lastFrameAt"] = _iso(now)
 
-        for face in faces:
-            emp_id, sim = self.m.gallery.match(face.embedding, settings.MATCH_THRESHOLD, settings.MATCH_MARGIN)
-            if not emp_id:
-                continue
-            hits = self.matches[emp_id]
-            hits.append((now, sim))
-            while hits and now - hits[0][0] > settings.CONFIRM_WINDOW_SEC:
-                hits.popleft()
-            if len(hits) >= settings.CONFIRM_FRAMES:
-                best = max(s for _, s in hits)
-                hits.clear()
-                self.m.report(emp_id, best, self.camera["id"], self.channel_no, now)
+        # 1. Face recognition analysis
+        # On Channel 1, run face detection every 4 frames to keep processing FPS at 8-12+ FPS.
+        # On Channel 2 (pan-tilt zoom lens), run face detection on every frame.
+        face_matches = []
+        run_face_rec = (self.channel_no != 1) or (self.frame_id % 4 == 0)
+        if run_face_rec:
+            faces = self.m.engine.analyze(frame)
+            self.state["facesDetected"] += len(faces)
+            for face in faces:
+                if not face.is_valid or face.embedding is None:
+                    continue  # Skip degraded/rejected face crop from identity assignment
+
+                match_res = self.m.gallery.match_diagnostic(
+                    face.embedding, threshold=settings.MATCH_THRESHOLD, margin=settings.MATCH_MARGIN
+                )
+
+                face_matches.append((
+                    face.box,
+                    match_res.employee_id,
+                    match_res.employee_name or "",
+                    match_res.similarity,
+                    face.face_id,
+                    {
+                        "qualityScore": face.quality_score,
+                        "sharpness": face.sharpness,
+                        "brightness": face.brightness,
+                        "isAmbiguous": match_res.is_ambiguous,
+                        "margin": match_res.margin,
+                        "runnerUpSimilarity": match_res.runner_up_similarity,
+                        "rejectionReason": match_res.rejection_reason,
+                    }
+                ))
+
+                if match_res.is_match and match_res.employee_id:
+                    hits = self.matches[match_res.employee_id]
+                    hits.append((now, match_res.similarity))
+                    while hits and now - hits[0][0] > settings.CONFIRM_WINDOW_SEC:
+                        hits.popleft()
+                    if len(hits) >= settings.CONFIRM_FRAMES:
+                        best = max(s for _, s in hits)
+                        hits.clear()
+                        self.m.report(match_res.employee_id, best, self.camera["id"], self.channel_no, now)
+
+        # 2. Multi-person tracking & doorway crossing (Channel 1)
+        if self.tracking_engine and self.yolo_detector:
+            if now - self.last_track_sync > 60.0:
+                self._sync_zones()
+                self.last_track_sync = now
+
+            h, w = frame.shape[:2]
+            if self.tracking_engine.width != w or self.tracking_engine.height != h:
+                self.tracking_engine.width = w
+                self.tracking_engine.height = h
+
+            try:
+                dets = self.yolo_detector.infer(frame)
+                tracks, removed_tracks, events, diagnostics = self.tracking_engine.evaluate(
+                    dets, face_matches, now, return_diagnostics=True
+                )
+
+                # Prepare single atomic frame batch payload
+                tracks_data = [
+                    {
+                        "id": f"{self.camera['id']}-ch{self.channel_no}-{tr.track_id}",
+                        "cameraId": self.camera["id"],
+                        "channelNo": self.channel_no,
+                        "trackId": tr.track_id,
+                        "employeeId": tr.employee_id,
+                        "employeeName": tr.employee_name or "Unidentified Person",
+                        "employeeCode": getattr(tr, "employee_code", None),
+                        "startedAt": _iso(tr.started_at),
+                        "lastSeenAt": _iso(tr.last_seen),
+                        "identityVerificationStatus": tr.identity_status,
+                        "currentZoneId": tr.current_zone_id or "PASSAGE",
+                        "boundingBox": [
+                            round(float(v) / (w if i % 2 == 0 else h), 4)
+                            for i, v in enumerate(tr.bbox)
+                        ],
+                        "detectionScore": round(float(tr.score), 2),
+                        "freshnessSec": round(max(0.0, now - tr.last_seen), 1),
+                        "faceId": getattr(tr, "face_id", None),
+                        "faceQuality": getattr(tr, "face_quality", 0.0),
+                        # v2.9 — ILE extended fields
+                        "identityState": getattr(tr, "identity_state", tr.identity_status),
+                        "faceVisible": getattr(tr, "face_currently_visible", False),
+                        "trackingWithoutFaceSec": round(getattr(tr, "tracking_without_face_sec", 0.0), 1),
+                    }
+                    for tr in tracks
+                ]
+
+                verified_cnt = len([
+                    t for t in tracks
+                    if t.identity_status in ("VERIFIED", "TRACKING_WITHOUT_FACE", "IDENTITY_LATCHED")
+                ])
+                unidentified_cnt = len(tracks) - verified_cnt
+
+                frame_payload = {
+                    "cameraId": self.camera["id"],
+                    "channelNo": self.channel_no,
+                    "frameId": self.frame_id,
+                    "frameTimestamp": _iso(now),
+                    "processingTimestamp": _iso(time.time()),
+                    "fps": self.current_fps,
+                    "metrics": {
+                        "detectedPeople": len(dets),
+                        "activeTracks": len(tracks),
+                        "verifiedTracks": verified_cnt,
+                        "unidentifiedTracks": unidentified_cnt,
+                        "fps": self.current_fps,
+                    },
+                    "tracks": tracks_data,
+                    "doorwayEvents": events,
+                    "endedTrackIds": [r.track_id for r in removed_tracks],
+                    "diagnostics": diagnostics,
+                }
+
+                # Single atomic POST request to backend
+                self.m.client.report_tracking_frame(frame_payload)
+
+                for ev in events:
+                    log.info(
+                        "[tracking] DOORWAY EVENT: %s -> %s (Emp: %s / %s)",
+                        ev.get("crossingLineId"),
+                        ev.get("eventType"),
+                        ev.get("employeeName"),
+                        ev.get("employeeId"),
+                    )
+
+            except Exception as e:
+                log.warning("[tracking] tracking evaluation failed: %s", e)
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -244,6 +398,20 @@ class RecognitionManager:
             "channelNo": channel_no,
             "seenAt": _iso(ts),
         }
+        # System A: Report observational presence evidence (does not touch official attendance)
+        try:
+            self.client.report_observation({
+                "eventId": str(uuid.uuid4()),
+                "employeeId": employee_id,
+                "cameraId": camera_id,
+                "channelNo": channel_no,
+                "similarityScore": round(similarity, 3),
+                "observedAt": _iso(ts),
+                "isUnknown": False,
+            })
+        except Exception as exc:
+            log.warning("[presence] could not report observation for %s: %s", employee_id, exc)
+
         try:
             result = self.client.report_recognition(
                 {k: entry[k] for k in ("employeeId", "cameraId", "channelNo", "similarity", "seenAt")}

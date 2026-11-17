@@ -71,6 +71,19 @@ async def embed(image: UploadFile = File(...)):
     return {"embedding": [round(float(x), 6) for x in vec]}
 
 
+@app.post("/validate-face", dependencies=[Depends(require_service_key)])
+async def validate_face(image: UploadFile = File(...), expected_angle: Optional[str] = None):
+    """Validate face image quality, lighting, blur, and head orientation."""
+    data = await image.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image too large (max 10 MB)")
+    try:
+        res = engine.validate_face(decode_image(data), expected_angle=expected_angle)
+        return {"success": True, "data": res}
+    except FaceEngineError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 @app.get("/status", dependencies=[Depends(require_service_key)])
 def status():
     if not manager:
