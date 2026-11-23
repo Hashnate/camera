@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Cctv, Wifi, WifiOff, Eye, ShieldCheck, MapPin } from 'lucide-react';
+import { Cctv, MapPin } from 'lucide-react';
 
 interface CameraCardProps {
   camera: {
@@ -10,88 +10,58 @@ interface CameraCardProps {
     model: string;
     serialNumber: string;
     status: string;
-    location?: string;
-    lastOnlineAt?: string;
-    channels?: { channelNo: number; channelName: string; snapshotUrl?: string }[];
+    location?: string | null;
+    channels?: { channelNo: number; channelName: string }[];
   };
-  onSelect: (camera: any) => void;
+  onSelect: (camera: CameraCardProps['camera']) => void;
   isSelected?: boolean;
 }
 
+/** One camera in the Live Cameras list. Shows only what the camera account reports. */
 export function CameraCard({ camera, onSelect, isSelected }: CameraCardProps) {
   const isOnline = camera.status === 'ONLINE';
 
   return (
-    <div
+    <button
+      type="button"
       onClick={() => onSelect(camera)}
-      className={`cursor-pointer rounded-xl border p-4 transition-all duration-200 bg-white shadow-sm hover:shadow-md ${
-        isSelected
-          ? 'border-blue-600 ring-2 ring-blue-500/20'
-          : 'border-slate-200 hover:border-slate-300'
+      aria-pressed={!!isSelected}
+      className={`w-full text-left rounded-2xl bg-white p-4 ring-1 transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${
+        isSelected ? 'ring-2 ring-blue-600 shadow-sm' : 'ring-slate-200/70 hover:shadow-sm'
       }`}
     >
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700">
-            <Cctv className="w-5 h-5" />
-          </div>
-          <div>
-            <h4 className="text-sm font-semibold text-slate-900 leading-tight">{camera.name}</h4>
-            <p className="text-xs text-slate-500 mt-0.5">Model: {camera.model}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center text-slate-600 shrink-0">
+            <Cctv className="w-4.5 h-4.5" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[13.5px] font-semibold text-slate-900 truncate">{camera.name}</p>
+            <p className="text-[12px] text-slate-500 truncate">{camera.model}</p>
           </div>
         </div>
-
-        <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium ${
-            isOnline
-              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-              : 'bg-rose-50 text-rose-700 border border-rose-200'
-          }`}
-        >
-          {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+        <span className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${isOnline ? 'text-emerald-700' : 'text-rose-700'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-rose-500'}`} aria-hidden="true" />
           {isOnline ? 'Online' : 'Offline'}
         </span>
       </div>
 
-      <div className="mt-4 pt-3 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs text-slate-600">
-        <div className="flex items-center gap-1.5 truncate">
-          <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-          <span className="truncate">{camera.location || 'Office Main'}</span>
-        </div>
-        <div className="flex items-center gap-1.5 font-mono text-slate-500 text-[11px]">
-          <span>S/N:</span>
-          <span>{camera.serialNumber}</span>
-        </div>
-      </div>
-
-      {/* Channels Pill */}
-      {camera.channels && camera.channels.length > 0 && (
-        <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-          {camera.channels.map((ch) => (
-            <span
-              key={ch.channelNo}
-              className="text-[10px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200"
-            >
-              Ch{ch.channelNo}: {ch.channelNo === 1 ? 'Wide' : 'PT'}
-            </span>
-          ))}
-          <span className="text-[10px] font-medium text-emerald-600 ml-auto flex items-center gap-0.5">
-            <ShieldCheck className="w-3 h-3" /> EZVIZ HLS
-          </span>
-        </div>
+      {camera.location && (
+        <p className="mt-3 flex items-center gap-1.5 text-[12.5px] text-slate-600 truncate">
+          <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          {camera.location}
+        </p>
       )}
 
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect(camera);
-        }}
-        className="w-full mt-3.5 flex items-center justify-center gap-2 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-sm transition-colors"
-      >
-        <Eye className="w-3.5 h-3.5" />
-        Watch Live Stream
-      </button>
-    </div>
+      {camera.channels && camera.channels.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {camera.channels.map((ch) => (
+            <span key={ch.channelNo} className="text-[11px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">
+              {ch.channelName}
+            </span>
+          ))}
+        </div>
+      )}
+    </button>
   );
 }
-

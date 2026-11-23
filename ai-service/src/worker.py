@@ -19,11 +19,49 @@ from typing import Optional
 from backend_client import BackendClient
 from config import settings
 from face_engine import FaceEngine, Gallery
+from camera_io import mask, open_spec
 from sources import FrameSource, HLSSource, SnapshotSource, open_override_source
 from yolo_detector import YOLOPersonDetector
 from tracking_engine import ZoneTrackingEngine
 
 log = logging.getLogger("ai.worker")
+
+
+def _eye_distance(face) -> Optional[float]:
+    """Pixels between the two eye landmarks: a robust measure of how much face detail we have."""
+    if len(face.landmarks) < 2:
+        return None
+    (rx, ry), (lx, ly) = face.landmarks[0], face.landmarks[1]
+    return ((lx - rx) ** 2 + (ly - ry) ** 2) ** 0.5
+
+
+# Recognition settings that can change while running. Defaults come from ai-service/.env; the dashboard's
+# Settings page overrides them (fetched from the backend every RUNTIME_CONFIG_REFRESH_SEC).
+TUNABLE_TYPES = {
+    "matchThreshold": float,
+    "matchMargin": float,
+    "smallFaceEyePx": float,
+    "smallFaceMatchThreshold": float,
+    "confirmFrames": int,
+    "confirmWindowSec": float,
+    "reportCooldownSec": float,
+    "minFaceSize": int,
+    "frameSource": str,
+}
+
+
+def env_tunables() -> dict:
+    return {
+        "matchThreshold": settings.MATCH_THRESHOLD,
+        "matchMargin": settings.MATCH_MARGIN,
+        "smallFaceEyePx": settings.SMALL_FACE_EYE_PX,
+        "smallFaceMatchThreshold": settings.SMALL_FACE_MATCH_THRESHOLD,
+        "confirmFrames": settings.CONFIRM_FRAMES,
+        "confirmWindowSec": settings.CONFIRM_WINDOW_SEC,
+        "reportCooldownSec": settings.REPORT_COOLDOWN_SEC,
+        "minFaceSize": settings.MIN_FACE_SIZE,
+        "frameSource": settings.FRAME_SOURCE,
+    }
 
 
 def _iso(ts: float) -> str:
@@ -47,6 +85,14 @@ class ChannelWorker(threading.Thread):
         self.last_track_sync = 0.0
         self.fps_times: deque = deque(maxlen=20)
         self.current_fps: float = 0.0
+        # Where this lens's video comes from (EZVIZ cloud, RTSP, HTTP or USB) and a key that changes with it.
+        self.spec: dict = next(
+            (ch.get("source") or {} for ch in camera.get("channels", []) if ch.get("channelNo") == channel_no), {}
+        ) or {"type": "ezviz"}
+        self.source_key = self.spec.get("key")
+        # Latest frame, for the dashboard's live preview of cameras a browser can't play (RTSP, USB, ...).
+        self.last_frame = None
+        self.last_frame_at = 0.0
 
         if channel_no == 1:
             try:
@@ -86,7 +132,9 @@ class ChannelWorker(threading.Thread):
     def _open_source(self) -> FrameSource:
         if settings.SOURCE_OVERRIDE:
             return open_override_source(settings.SOURCE_OVERRIDE)
-        mode = settings.FRAME_SOURCE
+        if self.spec.get("type", "ezviz") != "ezviz":
+            return open_spec(self.spec)  # RTSP / HTTP / USB
+        mode = self.m.cfg["frameSource"]
         use_hls = mode == "hls" or (mode == "auto" and time.time() >= self.hls_disabled_until)
         if use_hls:
             try:
@@ -124,11 +172,15 @@ class ChannelWorker(threading.Thread):
                     self.state.update(state="running", source=self.source.kind, lastError=None)
                     backoff = 2.0
                     # Switching back from snapshot fallback to HLS when the retry window passes.
-                elif (
-                    self.source.kind == "snapshot"
-                    and settings.FRAME_SOURCE == "auto"
-                    and not settings.SOURCE_OVERRIDE
-                    and time.time() >= self.hls_disabled_until
+                elif not settings.SOURCE_OVERRIDE and (
+                    (
+                        self.source.kind == "snapshot"
+                        and self.m.cfg["frameSource"] == "auto"
+                        and time.time() >= self.hls_disabled_until
+                    )
+                    # Frame source changed in Settings.
+                    or (self.source.kind == "snapshot" and self.m.cfg["frameSource"] == "hls")
+                    or (self.source.kind == "hls" and self.m.cfg["frameSource"] == "snapshot")
                 ):
                     self._close_source()
                     continue
@@ -139,7 +191,7 @@ class ChannelWorker(threading.Thread):
                     self._process(frame)
                 self.stop_event.wait(max(0.0, self.source.interval - (time.time() - started)))
             except Exception as exc:
-                msg = str(exc)
+                msg = mask(str(exc))
                 if "refresh due" not in msg:
                     log.warning("[%s] %s", self.name, msg)
                     self.state.update(state="error", lastError=msg)
@@ -165,6 +217,8 @@ class ChannelWorker(threading.Thread):
         self._close_source()
 
     def _process(self, frame) -> None:
+        cfg = self.m.cfg  # one consistent set of settings for this frame
+        self.last_frame, self.last_frame_at = frame, time.time()
         self.frame_id += 1
         now = time.time()
         self.fps_times.append(now)
@@ -187,8 +241,13 @@ class ChannelWorker(threading.Thread):
                 if not face.is_valid or face.embedding is None:
                     continue  # Skip degraded/rejected face crop from identity assignment
 
+                # Small (distant / partial) faces need a stronger match: they caused false identifications.
+                eye_px = _eye_distance(face)
+                threshold = cfg["matchThreshold"]
+                if eye_px is not None and eye_px < cfg["smallFaceEyePx"]:
+                    threshold = max(threshold, cfg["smallFaceMatchThreshold"])
                 match_res = self.m.gallery.match_diagnostic(
-                    face.embedding, threshold=settings.MATCH_THRESHOLD, margin=settings.MATCH_MARGIN
+                    face.embedding, threshold=threshold, margin=cfg["matchMargin"]
                 )
 
                 face_matches.append((
@@ -205,15 +264,17 @@ class ChannelWorker(threading.Thread):
                         "margin": match_res.margin,
                         "runnerUpSimilarity": match_res.runner_up_similarity,
                         "rejectionReason": match_res.rejection_reason,
+                        "eyeDistancePx": round(eye_px, 1) if eye_px is not None else None,
+                        "thresholdUsed": threshold,
                     }
                 ))
 
                 if match_res.is_match and match_res.employee_id:
                     hits = self.matches[match_res.employee_id]
                     hits.append((now, match_res.similarity))
-                    while hits and now - hits[0][0] > settings.CONFIRM_WINDOW_SEC:
+                    while hits and now - hits[0][0] > cfg["confirmWindowSec"]:
                         hits.popleft()
-                    if len(hits) >= settings.CONFIRM_FRAMES:
+                    if len(hits) >= cfg["confirmFrames"]:
                         best = max(s for _, s in hits)
                         hits.clear()
                         self.m.report(match_res.employee_id, best, self.camera["id"], self.channel_no, now)
@@ -310,6 +371,11 @@ class ChannelWorker(threading.Thread):
         self.stop_event.set()
 
 
+def _source_key(camera: dict, channel_no: int) -> Optional[str]:
+    ch = next((c for c in camera.get("channels", []) if c.get("channelNo") == channel_no), None)
+    return ((ch or {}).get("source") or {}).get("key")
+
+
 class RecognitionManager:
     """Owns the shared engine/gallery, starts one ChannelWorker per watched channel."""
 
@@ -324,6 +390,10 @@ class RecognitionManager:
         self._stop = threading.Event()
         self.gallery_loaded_at: Optional[str] = None
         self.last_error: Optional[str] = None
+        # Replaced as a whole (never mutated), so a worker always sees one consistent set.
+        self.cfg: dict = env_tunables()
+        self.cfg_source = ".env"
+        self.cfg_loaded_at: Optional[str] = None
         self._thread = threading.Thread(target=self._supervise, daemon=True, name="recognition-supervisor")
 
     def start(self) -> None:
@@ -337,7 +407,11 @@ class RecognitionManager:
     # -------------------------------------------------------------- supervision
 
     def _watched_channels(self, camera: dict) -> list[int]:
-        chans = [c["channelNo"] for c in camera.get("channels", [])] or [1]
+        channels = camera.get("channels") or []
+        if not channels:
+            return [1]
+        # Lenses with face recognition switched off in Settings are not watched.
+        chans = [c["channelNo"] for c in channels if c.get("recognitionEnabled", True)]
         if settings.WATCH_CHANNELS.strip().lower() != "all":
             wanted = {int(x) for x in settings.WATCH_CHANNELS.split(",") if x.strip()}
             chans = [c for c in chans if c in wanted]
@@ -352,10 +426,37 @@ class RecognitionManager:
             return [(cam, 1)] if cam else []
         return [(cam, ch) for cam in cameras for ch in self._watched_channels(cam)]
 
+    def _refresh_config(self) -> None:
+        """Pull recognition settings saved in the dashboard; keep the current ones if the backend can't say."""
+        try:
+            remote = (self.client.runtime_config() or {}).get("recognition") or {}
+        except Exception as exc:
+            log.debug("[config] runtime config unavailable: %s", exc)
+            return
+        new = dict(self.cfg)
+        for key, cast in TUNABLE_TYPES.items():
+            if remote.get(key) is not None:
+                try:
+                    new[key] = cast(remote[key])
+                except (TypeError, ValueError):
+                    log.warning("[config] ignoring invalid %s=%r", key, remote[key])
+        if new["frameSource"] not in ("auto", "hls", "snapshot"):
+            new["frameSource"] = self.cfg["frameSource"]
+        changed = {k: v for k, v in new.items() if self.cfg.get(k) != v}
+        if changed:
+            log.info("[config] recognition settings from the dashboard: %s", changed)
+        self.engine.min_face_size = int(new["minFaceSize"])
+        self.cfg = new
+        self.cfg_source = "dashboard"
+        self.cfg_loaded_at = _iso(time.time())
+
     def _supervise(self) -> None:
-        next_gallery = next_cameras = 0.0
+        next_gallery = next_cameras = next_config = 0.0
         while not self._stop.is_set():
             now = time.time()
+            if now >= next_config:
+                self._refresh_config()
+                next_config = now + settings.RUNTIME_CONFIG_REFRESH_SEC
             try:
                 if now >= next_gallery:
                     self.gallery.load(self.client.gallery())
@@ -374,7 +475,9 @@ class RecognitionManager:
     def _sync_workers(self, targets: list[tuple[dict, int]]) -> None:
         wanted = {(cam["id"], ch): (cam, ch) for cam, ch in targets}
         for key in list(self.workers):
-            if key not in wanted or not self.workers[key].is_alive():
+            w = self.workers[key]
+            if key not in wanted or not w.is_alive() or w.source_key != _source_key(*wanted[key]):
+                # Gone, crashed, or its address / login changed in Settings: (re)start it.
                 self.workers.pop(key).stop()
         for key, (cam, ch) in wanted.items():
             if key not in self.workers:
@@ -387,7 +490,7 @@ class RecognitionManager:
 
     def report(self, employee_id: str, similarity: float, camera_id: str, channel_no: int, ts: float) -> None:
         with self._report_lock:
-            if ts - self.last_reported.get(employee_id, 0) < settings.REPORT_COOLDOWN_SEC:
+            if ts - self.last_reported.get(employee_id, 0) < self.cfg["reportCooldownSec"]:
                 return
             self.last_reported[employee_id] = ts
         entry = {
@@ -426,6 +529,12 @@ class RecognitionManager:
             log.warning("[recognition] could not report %s: %s", employee_id, exc)
         self.recent.appendleft(entry)
 
+    def latest_frame(self, camera_id: str, channel_no: int, max_age: float = 10.0):
+        w = self.workers.get((camera_id, channel_no))
+        if w is None or w.last_frame is None or time.time() - w.last_frame_at > max_age:
+            return None
+        return w.last_frame
+
     def status(self) -> dict:
         return {
             "running": not self._stop.is_set(),
@@ -434,12 +543,9 @@ class RecognitionManager:
             "galleryLoadedAt": self.gallery_loaded_at,
             "lastError": self.last_error,
             "sourceOverride": bool(settings.SOURCE_OVERRIDE),
-            "settings": {
-                "frameSource": settings.FRAME_SOURCE,
-                "matchThreshold": settings.MATCH_THRESHOLD,
-                "confirmFrames": settings.CONFIRM_FRAMES,
-                "confirmWindowSec": settings.CONFIRM_WINDOW_SEC,
-            },
+            "settings": dict(self.cfg),
+            "settingsSource": self.cfg_source,
+            "settingsLoadedAt": self.cfg_loaded_at,
             "channels": [dict(w.state) for w in self.workers.values()],
             "recent": list(self.recent),
         }

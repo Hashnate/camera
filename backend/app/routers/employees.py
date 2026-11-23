@@ -147,17 +147,16 @@ def create_employee(body: dict = Depends(json_body), db: Session = Depends(get_d
         ws_obj = db.get(WorkSchedule, ws_id)
         if not ws_obj:
             ws_obj = db.scalar(select(WorkSchedule).where(WorkSchedule.name.ilike(str(ws_id).strip())))
-    if not ws_obj:
-        ws_obj = db.scalar(select(WorkSchedule).order_by(WorkSchedule.name))
+    # No schedule chosen = no fixed hours (never late), rather than silently picking one.
 
     emp = Employee(
         employee_code=clean_code,
         full_name=str(name).strip(),
         email=body.get("email"),
-        job_title=body.get("jobTitle") or "Software Engineer",
+        job_title=(body.get("jobTitle") or "").strip() or "Employee",
         department_id=dept_obj.id,
         work_schedule_id=ws_obj.id if ws_obj else None,
-        assigned_zone=body.get("assignedZone") or "Engineering Workspace",
+        assigned_zone=body.get("assignedZone") or None,
         phone_number=body.get("phoneNumber"),
         employment_type=body.get("employmentType") or "Full-Time",
         joining_date=body.get("joiningDate"),

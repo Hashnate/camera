@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, utcnow
 from app.errors import ApiError
 from app.models import Employee, WorkSession, AttendanceEvent, AttendanceReview, User, UserRole
+from app.permissions import Perm
 from app.security import current_user, require_role, json_body, AuthUser
 from app.services import work_session as ws_service
 from app.serialize import ser, ser_all
@@ -18,27 +19,34 @@ admin_only = require_role(UserRole.SUPER_ADMIN, UserRole.OFFICE_ADMIN, UserRole.
 router = APIRouter(prefix="/api/attendance", tags=["attendance"], dependencies=[Depends(current_user)])
 
 
+def _own_employee(db: Session, user: AuthUser) -> Optional[Employee]:
+    """The employee record linked to this login (Users & access), if any."""
+    return db.get(Employee, user.employee_id) if user.employee_id else None
+
+
+def _target_employee(db: Session, user: AuthUser, employee_id: Optional[str]) -> Employee:
+    """Who to check in/out: yourself by default; someone else only with people.manage."""
+    own = _own_employee(db, user)
+    if employee_id and (own is None or employee_id != own.id):
+        if not user.can(Perm.PEOPLE_MANAGE):
+            raise ApiError(403, "You can only check yourself in and out.")
+        emp = db.get(Employee, employee_id)
+        if not emp:
+            raise ApiError(404, "Employee not found")
+        return emp
+    if own is None:
+        raise ApiError(404, "Your login isn't linked to an employee record. Ask your admin.", code="NO_EMPLOYEE_LINK")
+    return own
+
+
 @router.post("/check-in")
 def employee_check_in(
     body: dict = Depends(json_body),
-    user: User = Depends(current_user),
+    user: AuthUser = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     """Explicit authorized employee check-in."""
-    employee_id = body.get("employeeId")
-    
-    # If not specified, look for employee matching user email/code or fallback to first active for dev
-    emp = None
-    if employee_id:
-        emp = db.get(Employee, employee_id)
-    if not emp and user.email:
-        emp = db.scalar(select(Employee).where(Employee.email == user.email))
-    if not emp:
-        # Default to first active employee
-        emp = db.scalar(select(Employee).where(Employee.is_active.is_(True)))
-
-    if not emp:
-        raise ApiError(404, "No active employee profile associated with request.")
+    emp = _target_employee(db, user, body.get("employeeId"))
 
     idempotency_key = body.get("idempotencyKey")
     session, event = ws_service.check_in(
@@ -64,21 +72,11 @@ def employee_check_in(
 @router.post("/check-out")
 def employee_check_out(
     body: dict = Depends(json_body),
-    user: User = Depends(current_user),
+    user: AuthUser = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     """Explicit authorized employee check-out."""
-    employee_id = body.get("employeeId")
-    emp = None
-    if employee_id:
-        emp = db.get(Employee, employee_id)
-    if not emp and user.email:
-        emp = db.scalar(select(Employee).where(Employee.email == user.email))
-    if not emp:
-        emp = db.scalar(select(Employee).where(Employee.is_active.is_(True)))
-
-    if not emp:
-        raise ApiError(404, "No active employee profile associated with request.")
+    emp = _target_employee(db, user, body.get("employeeId"))
 
     idempotency_key = body.get("idempotencyKey")
     session, event = ws_service.check_out(
@@ -102,13 +100,9 @@ def employee_check_out(
 
 
 @router.get("/me/today")
-def me_today(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def me_today(user: AuthUser = Depends(current_user), db: Session = Depends(get_db)):
     """Return today's attendance status and open work session for the authenticated user."""
-    emp = None
-    if user.email:
-        emp = db.scalar(select(Employee).where(Employee.email == user.email))
-    if not emp:
-        emp = db.scalar(select(Employee).where(Employee.is_active.is_(True)))
+    emp = _own_employee(db, user)
 
     if not emp:
         return {"success": True, "data": None}
@@ -129,15 +123,11 @@ def me_today(user: User = Depends(current_user), db: Session = Depends(get_db)):
 @router.get("/me/history")
 def me_history(
     limit: int = 30,
-    user: User = Depends(current_user),
+    user: AuthUser = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     """Historical work sessions for current user."""
-    emp = None
-    if user.email:
-        emp = db.scalar(select(Employee).where(Employee.email == user.email))
-    if not emp:
-        emp = db.scalar(select(Employee).where(Employee.is_active.is_(True)))
+    emp = _own_employee(db, user)
 
     if not emp:
         return {"success": True, "data": []}

@@ -32,6 +32,9 @@ class BackendClient:
     def cameras(self) -> list[dict]:
         return self._get("/internal/cameras")
 
+    def runtime_config(self) -> dict:
+        return self._get("/internal/runtime-config")
+
     def stream_url(self, camera_id: str, channel_no: int) -> str:
         return self._get(f"/internal/cameras/{camera_id}/stream", channel=channel_no)["streamUrl"]
 

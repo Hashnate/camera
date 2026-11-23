@@ -48,12 +48,16 @@ class LatestFrameCapture(FrameSource):
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self.failed = False
-        self._cap = cv2.VideoCapture(target, cv2.CAP_FFMPEG) if isinstance(target, str) else cv2.VideoCapture(target)
+        self._cap = self._open(target)
         if not self._cap.isOpened():
             self.failed = True
             raise RuntimeError(f"Could not open video source ({kind})")
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+
+    def _open(self, target):
+        """Create the cv2.VideoCapture (subclasses add timeouts / device options)."""
+        return cv2.VideoCapture(target, cv2.CAP_FFMPEG) if isinstance(target, str) else cv2.VideoCapture(target)
 
     def _loop(self) -> None:
         misses = 0

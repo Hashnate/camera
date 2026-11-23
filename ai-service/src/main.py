@@ -6,8 +6,10 @@ from typing import List, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
+from camera_io import PreviewPool, SourceError, grab_once, mask, to_jpeg
 from config import settings
 from face_engine import FaceEngine, FaceEngineError, decode_image
 from worker import RecognitionManager
@@ -17,6 +19,7 @@ log = logging.getLogger("ai")
 
 engine: Optional[FaceEngine] = None
 manager: Optional[RecognitionManager] = None
+preview_pool = PreviewPool()
 
 
 @asynccontextmanager
@@ -91,6 +94,45 @@ def status():
     return {"workerEnabled": True, **manager.status()}
 
 
+# ---------------------------------------------------------------- camera pictures (tests and live previews)
+
+
+class GrabRequest(BaseModel):
+    source: dict  # {"type": "rtsp"|"http"|"usb", "url": ...}
+    key: Optional[str] = None  # set for live previews: keeps the stream open between requests
+
+
+def _jpeg_response(frame) -> Response:
+    h, w = frame.shape[:2]
+    return Response(
+        to_jpeg(frame),
+        media_type="image/jpeg",
+        headers={"X-Frame-Width": str(w), "X-Frame-Height": str(h), "Cache-Control": "no-store"},
+    )
+
+
+@app.post("/grab-frame", dependencies=[Depends(require_service_key)])
+def grab_frame(req: GrabRequest):
+    """Open a camera (or reuse an open preview stream) and return one picture. Used by "Test connection"."""
+    try:
+        frame = preview_pool.frame(req.key, req.source) if req.key else grab_once(req.source)
+    except SourceError as exc:
+        raise HTTPException(status_code=400, detail=mask(str(exc)))
+    except Exception as exc:
+        log.warning("[grab-frame] %s", mask(str(exc)))
+        raise HTTPException(status_code=400, detail="Could not get a picture from the camera.")
+    return _jpeg_response(frame)
+
+
+@app.get("/preview/{camera_id}/{channel_no}", dependencies=[Depends(require_service_key)])
+def preview(camera_id: str, channel_no: int):
+    """Latest frame of a lens that recognition is watching (404 if it isn't watched right now)."""
+    frame = manager.latest_frame(camera_id, channel_no) if manager else None
+    if frame is None:
+        raise HTTPException(status_code=404, detail="Not watching this lens")
+    return _jpeg_response(frame)
+
+
 # ---------------------------------------------------------------- occupancy (unchanged stub)
 
 
@@ -125,7 +167,12 @@ def process_frame(req: FrameProcessRequest):
         "confidence": round(max((f.score for f in faces), default=0.0), 3) or None,
     }
     try:
-        httpx.post(f"{settings.BACKEND_API_URL}/analytics/events", json=payload, timeout=5)
+        httpx.post(
+            f"{settings.BACKEND_API_URL}/analytics/events",
+            json=payload,
+            headers={"X-Service-Key": settings.AI_SERVICE_KEY},
+            timeout=5,
+        )
     except Exception as exc:
         log.warning("[AI Service] Could not notify backend: %s", exc)
     return {

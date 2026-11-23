@@ -9,7 +9,10 @@ import logging
 from pathlib import Path
 from typing import Optional
 import numpy as np
-from ultralytics import YOLO
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
 log = logging.getLogger("ai.yolo")
 
@@ -21,6 +24,8 @@ class YOLOPersonDetector:
         conf_threshold: float = 0.30,
         iou_threshold: float = 0.45,
     ):
+        if YOLO is None:
+            raise RuntimeError("Ultralytics package is not installed. YOLO person detection disabled.")
         if not model_path:
             model_path = str(Path(__file__).resolve().parent.parent / "models" / "yolov8n.pt")
         self.model_path = model_path

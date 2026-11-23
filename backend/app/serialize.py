@@ -25,6 +25,8 @@ def ser(obj: Any, *, only: tuple[str, ...] | None = None, **relations: Any) -> d
         return None
     out: dict[str, Any] = {}
     for attr in sa_inspect(obj).mapper.column_attrs:
+        if attr.columns[0].info.get("private"):  # e.g. encrypted camera passwords: never sent to the browser
+            continue
         name = attr.columns[0].name
         if only is None or name in only:
             out[name] = value(getattr(obj, attr.key))

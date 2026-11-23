@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { Header } from '@/components/Header';
+import { useShell } from '@/components/shell/ShellContext';
 import {
   Coffee,
   Clock,
@@ -35,6 +37,7 @@ import {
 } from '@/lib/api';
 
 export default function BreaksDashboardPage() {
+  const canManage = useShell().can('people.manage');
   const [activeTab, setActiveTab] = useState<'live' | 'ledger' | 'reconciliation' | 'policies'>('policies');
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -324,7 +327,9 @@ export default function BreaksDashboardPage() {
     : liveEmployees.map(e => ({ id: e.employeeId, fullName: e.employeeName, employeeCode: e.employeeCode }));
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8">
+    <>
+    <Header />
+    <div className="flex-1 px-4 sm:px-6 lg:px-8 py-6 max-w-[1440px] w-full mx-auto space-y-6">
       {/* Status Toast Message */}
       {statusMessage && (
         <div
@@ -354,25 +359,13 @@ export default function BreaksDashboardPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200 pb-6">
         <div>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-bold">
-              <Coffee className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold text-slate-900">Actual Movement-Based Break Engine</h1>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200">
-                  v2.8 Active
-                </span>
-              </div>
-              <p className="text-sm text-slate-500">
-                Doorway transition tracking, non-overlapping intervals, zero double-counting reconciliation
-              </p>
-            </div>
-          </div>
+          <p className="text-[13px] text-slate-500 max-w-xl">
+            Breaks are detected when someone walks out through a door line, and checked against each break allowance.
+          </p>
         </div>
 
         <div className="flex items-center gap-3">
+          {canManage && (
           <button
             onClick={() => setShowDeclareModal(true)}
             className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-colors shadow-sm"
@@ -380,6 +373,7 @@ export default function BreaksDashboardPage() {
             <Plus className="w-4 h-4" />
             Declare Break
           </button>
+          )}
           <button
             onClick={() => setActiveTab('policies')}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border font-medium text-sm transition-colors ${
@@ -600,7 +594,7 @@ export default function BreaksDashboardPage() {
                         </div>
 
                         {/* Stop/End Break Quick Action */}
-                        <div className="pt-2 flex items-center justify-end">
+                        <div className={`pt-2 flex items-center justify-end ${canManage ? '' : 'hidden'}`}>
                           <button
                             onClick={() => handleEndOngoingBreak(b.id)}
                             disabled={actionLoading}
@@ -763,7 +757,7 @@ export default function BreaksDashboardPage() {
                         {item.source === 'CAMERA_DOORWAY_CROSSING' ? 'Camera Doorway' : 'Declaration'}
                       </td>
                       <td className="py-4 px-6 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className={`flex items-center justify-end gap-2 ${canManage ? '' : 'hidden'}`}>
                           <button
                             onClick={() => {
                               setSelectedInterval(item);
@@ -893,7 +887,7 @@ export default function BreaksDashboardPage() {
                 Customizable allowances for lunch, prayer, tea, outside departure, and personal pauses
               </p>
             </div>
-            <div className="flex items-center gap-2.5">
+            <div className={`flex items-center gap-2.5 ${canManage ? '' : 'hidden'}`}>
               <button
                 onClick={handleRestoreDefaults}
                 disabled={actionLoading}
@@ -944,7 +938,7 @@ export default function BreaksDashboardPage() {
 
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
                   <span>Scope: {p.employeeId ? 'Employee Specific' : 'Company Wide'}</span>
-                  <div className="flex items-center gap-3">
+                  <div className={`flex items-center gap-3 ${canManage ? '' : 'hidden'}`}>
                     <button
                       onClick={() => handleOpenEditPolicy(p)}
                       className="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1 transition-colors"
@@ -1337,5 +1331,6 @@ export default function BreaksDashboardPage() {
         </div>
       )}
     </div>
+    </>
   );
 }

@@ -13,6 +13,8 @@ from app.errors import ApiError
 from app.models import Camera, CameraChannel, CameraProviderType, Employee, FaceEnrollment, FaceTemplate
 from app.providers.ezviz import ezviz_provider
 from app.security import json_body
+from app.services import settings_store
+from app.services.camera_sources import source_for
 from app.services.attendance import apply_recognition
 from app.crypto import decrypt_embedding
 
@@ -58,7 +60,11 @@ def face_gallery(db: Session = Depends(get_db)):
 
 @router.get("/cameras")
 def cameras(db: Session = Depends(get_db)):
-    cams = db.scalars(select(Camera).where(Camera.provider == CameraProviderType.EZVIZ)).all()
+    """Cameras switched on in Settings (any kind), with each lens's video source and whether it runs recognition.
+
+    `source.url` carries the camera login for RTSP/HTTP lenses: this endpoint is for the AI service only.
+    """
+    cams = db.scalars(select(Camera).where(Camera.is_enabled.is_(True))).all()
     data = []
     for c in cams:
         chans = db.scalars(
@@ -69,10 +75,27 @@ def cameras(db: Session = Depends(get_db)):
                 "id": c.id,
                 "name": c.name,
                 "serialNumber": c.serial_number,
-                "channels": [{"channelNo": ch.channel_no, "channelName": ch.channel_name} for ch in chans],
+                "connectionType": c.connection_type,
+                "channels": [
+                    {
+                        "channelNo": ch.channel_no,
+                        "channelName": ch.channel_name,
+                        "recognitionEnabled": ch.recognition_enabled,
+                        "source": source_for(c, ch),
+                    }
+                    for ch in chans
+                    # A non-EZVIZ lens without an address can't be opened.
+                    if c.connection_type == "EZVIZ" or ch.stream_url
+                ],
             }
         )
     return {"success": True, "data": data}
+
+
+@router.get("/runtime-config")
+def runtime_config():
+    """Recognition settings from the dashboard; the AI service polls this and applies changes without a restart."""
+    return {"success": True, "data": {"recognition": settings_store.get("recognition")}}
 
 
 def _camera(db: Session, camera_id: str) -> Camera:

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Camera,
   Upload,
@@ -18,6 +18,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { api, FaceEnrollmentSummary } from '@/lib/api';
+import { MobileEnrollQR } from '@/components/MobileEnrollQR';
 
 interface Props {
   employee: { id: string; fullName: string; employeeCode: string };
@@ -43,7 +44,7 @@ interface CapturedAngle {
   lighting: string | null;
   sharpness: string | null;
   message: string | null;
-  source: 'WEBCAM' | 'UPLOAD';
+  source: 'WEBCAM' | 'UPLOAD' | 'MOBILE';
 }
 
 const INITIAL_ANGLES: Record<AngleKey, CapturedAngle> = {
@@ -131,44 +132,49 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
   const samples = enrollment?.samples ?? 0;
   const isCurrentlyEnrolled = samples > 0;
 
-  // Fetch existing enrolled angle details & photos on mount
-  useEffect(() => {
-    let active = true;
-    async function fetchEnrolledDetails() {
-      try {
-        const res = await api.getFaceDetails(employee.id);
-        const fetchedAngles = (res as any).angles || (res as any).data?.angles;
-        if (active && res.success && fetchedAngles) {
-          setAngles((prev) => {
-            const next = { ...prev };
-            (Object.keys(next) as AngleKey[]).forEach((k) => {
-              const info = fetchedAngles[k];
-              if (info && info.captured) {
-                const backendOrigin = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://127.0.0.1:5000';
-                const fullUrl = info.previewUrl
-                  ? (info.previewUrl.startsWith('http') ? info.previewUrl : `${backendOrigin}${info.previewUrl}`)
-                  : null;
-                next[k] = {
-                  ...next[k],
-                  previewUrl: fullUrl,
-                  status: 'APPROVED',
-                  qualityScore: info.qualityScore || 94,
-                  message: fullUrl ? 'Enrolled & Verified Photo' : 'Enrolled & Active AI Biometric Template',
-                };
-              }
-            });
-            return next;
+  // Fetch existing enrolled angle details & photos (on mount, and after a phone enrolment completes)
+  const activeRef = useRef(true);
+  const fetchEnrolledDetails = useCallback(async () => {
+    try {
+      const res = await api.getFaceDetails(employee.id);
+      const fetchedAngles = (res as any).angles || (res as any).data?.angles;
+      if (activeRef.current && res.success && fetchedAngles) {
+        setAngles((prev) => {
+          const next = { ...prev };
+          (Object.keys(next) as AngleKey[]).forEach((k) => {
+            const info = fetchedAngles[k];
+            if (info && info.captured) {
+              const backendOrigin = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://127.0.0.1:5000';
+              const baseUrl = info.previewUrl
+                ? (info.previewUrl.startsWith('http') ? info.previewUrl : `${backendOrigin}${info.previewUrl}`)
+                : null;
+              // Same file name is reused per angle, so bust the browser cache when the photo changes.
+              const fullUrl = baseUrl && info.updatedAt ? `${baseUrl}?v=${encodeURIComponent(info.updatedAt)}` : baseUrl;
+              next[k] = {
+                ...next[k],
+                blob: null,
+                previewUrl: fullUrl,
+                status: 'APPROVED',
+                qualityScore: info.qualityScore || 94,
+                message: fullUrl ? 'Enrolled & Verified Photo' : 'Enrolled & Active AI Biometric Template',
+              };
+            }
           });
-        }
-      } catch (err) {
-        console.warn('Could not load existing face preview details:', err);
+          return next;
+        });
       }
+    } catch (err) {
+      console.warn('Could not load existing face preview details:', err);
     }
+  }, [employee.id]);
+
+  useEffect(() => {
+    activeRef.current = true;
     fetchEnrolledDetails();
     return () => {
-      active = false;
+      activeRef.current = false;
     };
-  }, [employee.id]);
+  }, [fetchEnrolledDetails]);
 
   // Cleanup object URLs on unmount
   useEffect(() => {
@@ -322,51 +328,79 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
     try {
       const res = await api.validateFace(blob, expected === 'OPTIONAL' ? undefined : expected);
 
-      if (res.success && res.data) {
-        const val = res.data;
-        const isApproved = val.valid && (val.status === 'APPROVED' || val.angleMatch !== false);
-
-        setAngles((prev) => ({
-          ...prev,
-          [key]: {
-            ...prev[key],
-            status: isApproved ? 'APPROVED' : 'RECAPTURE_REQUIRED',
-            qualityScore: val.qualityScore !== undefined ? Math.round(val.qualityScore * 100) : 92,
-            detectedAngle: val.detectedAngle || expected,
-            lighting: val.lighting || 'GOOD',
-            sharpness: val.sharpness || 'SHARP',
-            message: val.message || (isApproved ? 'Face image verified' : 'Recapture recommended'),
-          },
-        }));
-      } else {
-        setAngles((prev) => ({
-          ...prev,
-          [key]: {
-            ...prev[key],
-            status: 'APPROVED',
-            qualityScore: 90,
-            detectedAngle: expected,
-            lighting: 'GOOD',
-            sharpness: 'SHARP',
-            message: 'Face captured successfully',
-          },
-        }));
-      }
+      // Show only what the face check actually reported; never invent scores or approvals.
+      const val = res.data;
+      const isApproved = !!(res.success && val?.valid && (val.status === 'APPROVED' || val.angleMatch !== false));
+      setAngles((prev) => ({
+        ...prev,
+        [key]: {
+          ...prev[key],
+          status: isApproved ? 'APPROVED' : 'RECAPTURE_REQUIRED',
+          qualityScore: val?.valid && typeof val.qualityScore === 'number' ? Math.round(val.qualityScore * 100) : null,
+          detectedAngle: val?.valid ? val.detectedAngle ?? null : null,
+          lighting: val?.valid ? val.lighting ?? null : null,
+          sharpness: val?.valid ? val.sharpness ?? null : null,
+          message: val?.message || (isApproved ? 'Face found and clear' : 'No clear face found. Please use another photo.'),
+        },
+      }));
     } catch (err: any) {
+      // Face service unreachable: keep the photo, but say it hasn't been checked (Save checks it again).
       setAngles((prev) => ({
         ...prev,
         [key]: {
           ...prev[key],
           status: 'APPROVED',
-          qualityScore: 88,
-          detectedAngle: expected,
-          lighting: 'GOOD',
-          sharpness: 'SHARP',
-          message: 'Captured (Verified locally)',
+          qualityScore: null,
+          detectedAngle: null,
+          lighting: null,
+          sharpness: null,
+          message: `Not checked yet (${err?.message || 'face service unavailable'}). It will be checked when you save.`,
         },
       }));
     }
   };
+
+  /** The phone sent its photos: show them as captured but unsaved. Nothing is enrolled until Save. */
+  const mobileSessionRef = useRef<string | null>(null);
+  const handlePhonePhotos = useCallback(
+    async (sessionId: string, sent: string[]) => {
+      mobileSessionRef.current = sessionId;
+      setMessage(null);
+      const keys = sent.filter((a): a is AngleKey => ['front', 'left', 'right', 'additional'].includes(a));
+      let loaded = 0;
+      for (const key of keys) {
+        try {
+          const blob = await api.getMobileEnrollPhoto(sessionId, key);
+          const previewUrl = URL.createObjectURL(blob);
+          setAngles((prev) => ({
+            ...prev,
+            [key]: {
+              ...prev[key],
+              blob,
+              previewUrl,
+              status: 'APPROVED',
+              source: 'MOBILE',
+              qualityScore: null,
+              detectedAngle: null,
+              lighting: null,
+              sharpness: null,
+              message: 'From the phone, not saved yet',
+            },
+          }));
+          loaded += 1;
+        } catch (err) {
+          console.warn('Could not load phone photo', key, err);
+        }
+      }
+      const firstName = employee.fullName.split(' ')[0];
+      setMessage(
+        loaded
+          ? { ok: true, text: `${loaded} photos arrived from ${firstName}'s phone. They are not saved yet: check them below, then click Save.` }
+          : { ok: false, text: 'Could not load the photos from the phone. Show a new QR code and try again.' }
+      );
+    },
+    [employee.fullName]
+  );
 
   const handleRemoveAngle = (key: AngleKey) => {
     setAngles((prev) => ({
@@ -399,12 +433,19 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
 
     try {
       let enrolledCount = 0;
+      let savedPhonePhotos = false;
       for (const k of approvedKeys) {
         const item = angles[k];
         if (item.blob) {
           await api.enrollFace(employee.id, item.blob, item.source, k);
           enrolledCount += 1;
+          savedPhonePhotos ||= item.source === 'MOBILE';
         }
+      }
+      // The phone photos are enrolled now: let the server discard its temporary copies.
+      if (savedPhonePhotos && mobileSessionRef.current) {
+        api.completeMobileEnrollSession(mobileSessionRef.current).catch(() => {});
+        mobileSessionRef.current = null;
       }
 
       setMessage({
@@ -443,21 +484,24 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
   return (
     <div
       className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
-      onClick={onClose}
+      // Close only on a click that is on the dark backdrop itself (never on anything inside the dialog,
+      // e.g. the hidden file input the Upload buttons trigger, which used to close the dialog).
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) onClose();
+      }}
     >
-      {/* Hidden File Input for Image Upload */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        accept="image/jpeg,image/png,image/webp"
-        className="hidden"
-        onChange={handleFileSelected}
-      />
-
       <div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto border border-slate-200"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Hidden file input for photo upload (inside the panel so its click can't reach the backdrop) */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden"
+          onChange={handleFileSelected}
+        />
         {/* Modal Header */}
         <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 to-white">
           <div className="flex items-center gap-3">
@@ -532,6 +576,9 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
               </button>
             </div>
           )}
+
+          {/* Photos taken on the employee's own phone via one-time QR link (loaded here, saved only by HR) */}
+          <MobileEnrollQR employee={employee} onPhotosReceived={handlePhonePhotos} />
 
           {/* 4-Step Breadcrumb Navigation */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
@@ -813,6 +860,17 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
                       </div>
                     )}
                   </div>
+
+                  {/* Result of the face check for a new (unsaved) photo */}
+                  {card.blob && card.message && card.status !== 'VALIDATING' && (
+                    <p
+                      className={`mb-2 text-[11.5px] leading-snug ${
+                        card.status === 'RECAPTURE_REQUIRED' ? 'text-amber-700 font-medium' : 'text-slate-500'
+                      }`}
+                    >
+                      {card.message}
+                    </p>
+                  )}
 
                   {/* Card Actions */}
                   <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">

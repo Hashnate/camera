@@ -20,11 +20,15 @@ from app.routers import (
     cameras,
     daily_tracking,
     employees,
+    enroll_public,
     faces,
     internal,
+    me,
     presence,
     recognition,
+    settings as settings_router,
     tracking,
+    users,
     work_attendance,
     work_hours,
     zones,
@@ -38,7 +42,9 @@ async def lifespan(_app: FastAPI):
     masked = re.sub(r":[^:@/]+@", ":****@", settings.DATABASE_URL)
     log.info("[WorkSight Backend] Server running on port %s in %s mode", settings.PORT, settings.APP_ENV)
     log.info("[WorkSight Backend] Database target: %s", masked)
-    log.info("[WorkSight Backend] EZVIZ API Target: %s", settings.EZVIZ_API_BASE_URL)
+    # New enum values can't be added inside a transaction block, so do it first in autocommit mode.
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.exec_driver_sql("""ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'EMPLOYEE'""")
     # Create any tables that don't exist yet (e.g. face enrolment tables); existing ones are untouched.
     Base.metadata.create_all(engine)
     with engine.begin() as conn:  # speeds up work-hours queries on existing databases
@@ -46,6 +52,30 @@ async def lifespan(_app: FastAPI):
             'CREATE INDEX IF NOT EXISTS "RecognitionEvent_attendanceRecordId_seenAt_idx" '
             'ON "RecognitionEvent" ("attendanceRecordId", "seenAt")'
         )
+        # Columns added for the Settings page (create_all never alters existing tables).
+        conn.exec_driver_sql('ALTER TABLE "Camera" ADD COLUMN IF NOT EXISTS "isEnabled" BOOLEAN NOT NULL DEFAULT true')
+        conn.exec_driver_sql(
+            'ALTER TABLE "CameraChannel" ADD COLUMN IF NOT EXISTS "recognitionEnabled" BOOLEAN NOT NULL DEFAULT true'
+        )
+        # Cameras of any brand (RTSP / HTTP / USB as well as the EZVIZ cloud).
+        conn.exec_driver_sql(
+            'ALTER TABLE "Camera" ADD COLUMN IF NOT EXISTS "connectionType" TEXT NOT NULL DEFAULT \'EZVIZ\''
+        )
+        for col, sqltype in (("brand", "TEXT"), ("host", "TEXT"), ("port", "INTEGER"), ("username", "TEXT"), ("passwordEnc", "TEXT")):
+            conn.exec_driver_sql(f'ALTER TABLE "Camera" ADD COLUMN IF NOT EXISTS "{col}" {sqltype}')
+        conn.exec_driver_sql('ALTER TABLE "CameraChannel" ADD COLUMN IF NOT EXISTS "streamUrl" TEXT')
+        # User accounts and access levels.
+        for col, sqltype in (
+            ("isActive", "BOOLEAN NOT NULL DEFAULT true"),
+            ("employeeId", 'TEXT REFERENCES "Employee"(id) ON DELETE SET NULL'),
+            ("mustChangePassword", "BOOLEAN NOT NULL DEFAULT false"),
+            ("tokenVersion", "INTEGER NOT NULL DEFAULT 0"),
+            ("lastLoginAt", "TIMESTAMP(3)"),
+            ("failedLogins", "INTEGER NOT NULL DEFAULT 0"),
+            ("lockedUntil", "TIMESTAMP(3)"),
+        ):
+            conn.exec_driver_sql(f'ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "{col}" {sqltype}')
+        conn.exec_driver_sql('CREATE UNIQUE INDEX IF NOT EXISTS "User_employeeId_key" ON "User" ("employeeId")')
     if not settings.AI_SERVICE_KEY:
         log.warning("[WorkSight Backend] AI_SERVICE_KEY not set: automatic attendance is disabled")
     yield
@@ -78,7 +108,7 @@ def health():
     }
 
 
-for module in (auth, work_attendance, presence, zones, tracking, daily_tracking, breaks, cameras, employees, attendance, analytics, faces, recognition, work_hours, internal):
+for module in (auth, work_attendance, presence, zones, tracking, daily_tracking, breaks, cameras, employees, attendance, analytics, faces, enroll_public, recognition, work_hours, internal, settings_router, users, me):
     app.include_router(module.router)
 
 app.include_router(presence.internal_router)

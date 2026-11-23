@@ -52,6 +52,20 @@ def encrypt_embedding(embedding: List[float], key_id: str = DEFAULT_KEY_ID) -> T
     return ciphertext, iv.hex(), tag.hex(), key_id
 
 
+_TEXT_AAD = b"worksight-setting"
+
+
+def encrypt_text(plaintext: str) -> str:
+    """Encrypt a short secret (e.g. a camera-account password) for storage: hex(iv + ciphertext + tag)."""
+    iv = os.urandom(12)
+    return (iv + AESGCM(_get_encryption_key()).encrypt(iv, plaintext.encode("utf-8"), _TEXT_AAD)).hex()
+
+
+def decrypt_text(blob_hex: str) -> str:
+    raw = bytes.fromhex(blob_hex)
+    return AESGCM(_get_encryption_key()).decrypt(raw[:12], raw[12:], _TEXT_AAD).decode("utf-8")
+
+
 def decrypt_embedding(ciphertext: bytes, iv_hex: str, tag_hex: str, key_id: str = DEFAULT_KEY_ID) -> List[float]:
     """Decrypt and verify an AES-256-GCM encrypted embedding.
     

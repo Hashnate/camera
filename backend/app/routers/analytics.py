@@ -17,6 +17,7 @@ from app.models import (
 )
 from app.security import current_user, json_body
 from app.serialize import ser, ser_all
+from app.routers.internal import require_service_key
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -88,9 +89,9 @@ def zone_occupancy(db: Session = Depends(get_db)):
     }
 
 
-@router.post("/events")
+@router.post("/events", dependencies=[Depends(require_service_key)])
 def record_detection_event(body: dict = Depends(json_body), db: Session = Depends(get_db)):
-    """Ingestion endpoint for the Python AI computer-vision service (no auth, as before)."""
+    """Ingestion endpoint for the Python AI computer-vision service (needs the service key)."""
     camera_id, event_type = body.get("cameraId"), body.get("eventType")
     if not camera_id or not event_type:
         raise ApiError(400, "cameraId and eventType are required")

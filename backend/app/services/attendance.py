@@ -12,7 +12,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.services import settings_store
 from app.models import AttendanceRecord, AttendanceStatus, Employee, RecognitionEvent, WorkSchedule
 
 
@@ -88,8 +88,8 @@ def apply_recognition(
     recent = db.scalar(
         select(RecognitionEvent.id).where(
             RecognitionEvent.employee_id == emp.id,
-            RecognitionEvent.seen_at > seen_at - timedelta(seconds=settings.RECOGNITION_DEDUP_SEC),
-            RecognitionEvent.seen_at <= seen_at + timedelta(seconds=settings.RECOGNITION_DEDUP_SEC),
+            RecognitionEvent.seen_at > seen_at - timedelta(seconds=settings_store.value("attendance", "recognitionDedupSec")),
+            RecognitionEvent.seen_at <= seen_at + timedelta(seconds=settings_store.value("attendance", "recognitionDedupSec")),
         )
     )
     if recent:
@@ -107,7 +107,7 @@ def apply_recognition(
         if record.check_out:
             check_out(emp, record, record.check_out)
         action = "CHECK_IN"
-    elif seen_at - record.check_in >= timedelta(minutes=settings.AUTO_CHECKOUT_MIN_GAP_MIN) and (
+    elif seen_at - record.check_in >= timedelta(minutes=settings_store.value("attendance", "autoCheckoutGapMin")) and (
         record.check_out is None or seen_at > record.check_out
     ):
         check_out(emp, record, seen_at)

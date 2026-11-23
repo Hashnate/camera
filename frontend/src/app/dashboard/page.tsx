@@ -1,368 +1,480 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+/**
+ * Overview: who is in right now, how today is going, camera health and the week, using only
+ * live data (Office Time presence, recognition events, recognition status). No placeholder figures.
+ */
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
-  Users,
-  UserCheck,
-  UserX,
-  Clock,
+  AlertTriangle,
+  ArrowRight,
   Cctv,
-  Activity,
-  ArrowUpRight,
-  ShieldCheck,
-  Video,
-  Layers,
-  MapPin,
-  RefreshCw,
-  Building2,
-  Coffee,
+  CheckCircle2,
+  Circle,
+  Clock,
   DoorOpen,
-  HelpCircle,
-  LogOut,
-  ChevronRight,
+  Footprints,
+  ScanFace,
+  Timer,
+  UserCheck,
+  UserPlus,
+  Users,
 } from 'lucide-react';
 import { Header } from '@/components/Header';
-import { api, DailyTrackingItem } from '@/lib/api';
+import { api, RecognitionEvent, WorkDayRow, workHoursApi } from '@/lib/api';
+import { useShell } from '@/components/shell/ShellContext';
+import { Avatar, Card, CardHeader, CardLink, EmptyState, PresenceBadge, PresenceTone, Skeleton, StatTile, Tag, btn } from '@/components/ui';
+import { WeekChart, WeekPoint } from '@/components/WeekChart';
+import { fmtDate, fmtDur, fmtMin, fmtTime, readGap, shiftDate, timeAgo } from '@/lib/format';
 
-const ZONE_BADGES: Record<string, { label: string; bg: string; border: string; text: string }> = {
-  WORK_ROOM: { label: 'Working Room', bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700' },
-  LUNCH_ROOM: { label: 'Lunch Room', bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700' },
-  PASSAGE: { label: 'Passage', bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' },
-  OUTSIDE: { label: 'Outside Office', bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700' },
-  UNKNOWN: { label: 'Unknown / Stale', bg: 'bg-slate-100', border: 'border-slate-200', text: 'text-slate-600' },
-};
+type Daily = Awaited<ReturnType<typeof workHoursApi.daily>>;
+
+const STATUS = { in: '#0ca30c', away: '#fab219', out: '#d9dce1' }; // status palette (good / warning) + neutral
+
+function presenceOf(r: WorkDayRow, isToday: boolean): { tone: PresenceTone; label: string; order: number } {
+  if (r.state === 'IN_OFFICE') return { tone: 'in', label: 'In office', order: 0 };
+  if (r.state === 'LEFT') return isToday ? { tone: 'away', label: 'Not seen now', order: 1 } : { tone: 'present', label: 'Was in', order: 1 };
+  return { tone: 'out', label: isToday ? 'Not in yet' : 'Absent', order: 2 };
+}
+
+/** Thin inside/away strip for one person on a shared time window. */
+function DayStrip({ row, start, end }: { row: WorkDayRow; start: number; end: number }) {
+  const span = Math.max(1, end - start);
+  const pct = (iso: string) => ((new Date(iso).getTime() - start) / span) * 100;
+  return (
+    <div className="relative h-1.5 rounded-full bg-slate-100 overflow-hidden" aria-hidden="true">
+      {row.awayPeriods.map((p, i) => (
+        <span key={`a${i}`} className="absolute inset-y-0" style={{ left: `${pct(p.start)}%`, width: `${Math.max(0.8, pct(p.end) - pct(p.start))}%`, background: STATUS.away }} />
+      ))}
+      {row.sessions.map((s, i) => (
+        <span key={`s${i}`} className="absolute inset-y-0 rounded-full" style={{ left: `${pct(s.start)}%`, width: `${Math.max(0.8, pct(s.end) - pct(s.start))}%`, background: STATUS.in }} />
+      ))}
+    </div>
+  );
+}
+
+const EVENT_VERB: Record<string, string> = { CHECK_IN: 'arrived', SEEN: 'was seen', CHECK_OUT: 'was seen' };
 
 export default function OverviewPage() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [dailyEmployees, setDailyEmployees] = useState<DailyTrackingItem[]>([]);
+  const { status, health, can } = useShell();
+  const canManagePeople = can('people.manage');
+  const [daily, setDaily] = useState<Daily | null>(null);
+  const [week, setWeek] = useState<WeekPoint[] | null>(null);
+  const [events, setEvents] = useState<RecognitionEvent[] | null>(null);
+  const [cameras, setCameras] = useState<any[] | null>(null);
+  const [enrolledIds, setEnrolledIds] = useState<Set<string> | null>(null);
+  const [zoneCount, setZoneCount] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
 
-  const fetchOverview = async () => {
-    try {
-      setLoading(true);
-      const [res, dailyRes] = await Promise.all([
-        api.getOverviewStats(),
-        api.getDailyTrackingLive(),
-      ]);
-      if (res.success) {
-        setData(res.data);
+  const loadLive = useCallback(async () => {
+    const gap = readGap() ?? undefined; // undefined = the system setting
+    const [d, e] = await Promise.allSettled([workHoursApi.daily(undefined, gap), api.getRecognitionEvents(12)]);
+    if (d.status === 'fulfilled') {
+      setDaily(d.value);
+      setError(null);
+      try {
+        const s = await workHoursApi.summary(shiftDate(d.value.today, -6), d.value.today, gap);
+        setWeek(
+          s.dates.map((date) => {
+            const days = s.data.map((r) => r.days.find((x) => x.date === date)!).filter(Boolean);
+            return {
+              date,
+              insideMinutes: days.reduce((a, x) => a + (x.present ? x.insideMinutes : 0), 0),
+              present: days.filter((x) => x.present).length,
+              late: days.filter((x) => x.isLate).length,
+            };
+          })
+        );
+      } catch {
+        /* chart keeps its last render */
       }
-      if (dailyRes.success) {
-        setDailyEmployees(dailyRes.data || []);
-      }
-    } catch (err) {
-      console.error('Failed to load overview:', err);
-    } finally {
-      setLoading(false);
+    } else {
+      setError(d.reason?.message || 'Could not load today’s data');
     }
-  };
-
-  useEffect(() => {
-    fetchOverview();
-    const interval = setInterval(() => {
-      api.getDailyTrackingLive().then((r) => {
-        if (r.success) setDailyEmployees(r.data || []);
-      }).catch(() => {});
-    }, 5000);
-    return () => clearInterval(interval);
+    if (e.status === 'fulfilled') setEvents(e.value.data.filter((x) => x.action !== 'IGNORED_INACTIVE'));
+    setNow(Date.now());
   }, []);
 
-  const summary = data?.summary || {
-    totalEmployees: 5,
-    presentCount: 3,
-    absentCount: 2,
-    lateCount: 1,
-    totalCameras: 1,
-    onlineCameras: 1,
-    offlineCameras: 0,
-    totalZones: 4,
-    occupiedZonesCount: 3,
-  };
+  useEffect(() => {
+    loadLive();
+    api.getCameras().then((r) => setCameras(r.data.filter((c: any) => c.isEnabled !== false))).catch(() => setCameras([]));
+    api.getFaceEnrollments().then((r) => setEnrolledIds(new Set(r.data.filter((x) => x.samples > 0).map((x) => x.employeeId)))).catch(() => {});
+    api.getZones().then((r) => setZoneCount(r.count ?? r.data.length)).catch(() => {});
+    const t = setInterval(loadLive, 30000);
+    return () => clearInterval(t);
+  }, [loadLive]);
+
+  const isToday = !!daily?.isToday;
+  const rows = useMemo(() => {
+    if (!daily) return [];
+    return [...daily.data]
+      .map((r) => ({ r, p: presenceOf(r, isToday) }))
+      .sort((a, b) => a.p.order - b.p.order || (a.r.firstSeen ?? '').localeCompare(b.r.firstSeen ?? '') || a.r.employee.fullName.localeCompare(b.r.employee.fullName));
+  }, [daily, isToday]);
+
+  const total = daily?.summary.employees ?? 0;
+  const inNow = rows.filter((x) => x.p.tone === 'in').length;
+  const notSeen = rows.filter((x) => x.p.tone === 'away').length;
+  const notIn = rows.filter((x) => x.p.tone === 'out').length;
+  const arrived = daily?.summary.present ?? 0;
+  const late = rows.filter((x) => x.r.isLate).length;
+  const awayPeriods = rows.flatMap((x) => x.r.awayPeriods);
+  const longestAway = Math.max(0, ...awayPeriods.map((p) => p.seconds));
+
+  const windowRange = useMemo(() => {
+    const withData = rows.filter((x) => x.r.sessions.length);
+    if (!withData.length) return null;
+    const hour = 3600_000;
+    const start = Math.floor(Math.min(...withData.map((x) => new Date(x.r.sessions[0].start).getTime())) / hour) * hour;
+    let end = Math.max(...withData.map((x) => new Date(x.r.sessions[x.r.sessions.length - 1].end).getTime()));
+    if (isToday) end = Math.max(end, now);
+    return { start, end: Math.max(start + hour, Math.ceil(end / hour) * hour) };
+  }, [rows, isToday, now]);
+
+  const activeIds = new Set(daily?.data.map((r) => r.employee.id) ?? []);
+  const enrolled = enrolledIds ? Array.from(enrolledIds).filter((id) => activeIds.has(id)).length : null;
+  const setup = [
+    ...(cameras && cameras.length === 0
+      ? [
+          {
+            done: false,
+            title: 'Add your camera',
+            detail: 'Add an IP, USB or EZVIZ camera in Settings',
+            href: '/dashboard/settings?tab=cameras',
+          },
+        ]
+      : []),
+    {
+      done: health === 'live',
+      title: health === 'live' ? 'Face recognition is running' : 'Start face recognition',
+      detail: health === 'live' ? 'Cameras are being watched' : 'Run start-all.ps1 on the office PC',
+      href: '/dashboard/cameras',
+    },
+    {
+      done: total > 0 && enrolled !== null && enrolled >= total,
+      title: enrolled !== null && enrolled >= total && total > 0 ? 'Every employee is enrolled' : `Enrol ${Math.max(0, total - (enrolled ?? 0))} more face${total - (enrolled ?? 0) === 1 ? '' : 's'}`,
+      detail: `${enrolled ?? '—'} of ${total} employees can be recognised`,
+      href: '/dashboard/employees',
+    },
+    {
+      done: (zoneCount ?? 0) > 0,
+      title: (zoneCount ?? 0) > 0 ? 'Rooms are set up' : 'Draw rooms and the door line',
+      detail: (zoneCount ?? 0) > 0 ? `${zoneCount} zones configured` : 'Adds time per room and exits through the door',
+      href: '/dashboard/zones',
+    },
+  ];
+  const setupDone = setup.filter((s) => s.done).length;
+  // Setup steps are only useful to the people who can do them.
+  const showSetup = (can('setup.manage') || canManagePeople) && zoneCount !== null && enrolled !== null && status !== null && setupDone < setup.length;
+
+  const channelState = (cameraId: string, channelNo: number) => status?.channels?.find((c) => c.cameraId === cameraId && c.channelNo === channelNo);
 
   return (
     <>
       <Header
-        title="Executive Workplace Overview"
-        subtitle="Real-time office presence, zone occupancy, and camera operations"
+        title="Overview"
+        subtitle={daily ? `${fmtDate(daily.date, { weekday: 'long', day: 'numeric', month: 'long' })} · updated ${timeAgo(new Date(now).toISOString(), Date.now())}` : 'Loading…'}
+        actions={
+          <>
+            <Link href="/dashboard/office-time" className={btn.secondary}>
+              <Clock className="w-4 h-4" /> Office Time
+            </Link>
+            {canManagePeople && (
+              <Link href="/dashboard/employees/register" className={btn.primary}>
+                <UserPlus className="w-4 h-4" /> Add employee
+              </Link>
+            )}
+          </>
+        }
       />
 
-      <main className="p-8 space-y-8">
-        {/* KPI Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          {/* Total Employees */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Registered Staff</p>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">{summary.totalEmployees}</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Active workforce</p>
-            </div>
-            <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-              <Users className="w-6 h-6" />
-            </div>
+      <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 space-y-4 max-w-[1440px] w-full mx-auto">
+        {health === 'offline' && (
+          <div className="flex items-start gap-3 rounded-xl bg-rose-50 ring-1 ring-inset ring-rose-200 px-4 py-3 text-[13px] text-rose-900">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-rose-600" />
+            <p>
+              <b className="font-semibold">Face recognition is offline.</b> The cameras aren&apos;t being watched, so arrivals and office time
+              aren&apos;t being recorded.{' '}
+              {can('setup.manage') ? (
+                <>
+                  Start it with <code className="px-1 py-0.5 rounded bg-rose-100 text-[12px]">start-all.ps1</code>.
+                </>
+              ) : (
+                'Let your admin know.'
+              )}
+            </p>
           </div>
-
-          {/* Confirmed Present */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider">Confirmed Present</p>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">{summary.presentCount}</h3>
-              <p className="text-xs text-emerald-600 mt-0.5 font-medium">
-                {Math.round((summary.presentCount / (summary.totalEmployees || 1)) * 100)}% attendance rate
-              </p>
-            </div>
-            <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <UserCheck className="w-6 h-6" />
-            </div>
+        )}
+        {error && (
+          <div className="flex items-center gap-3 rounded-xl bg-amber-50 ring-1 ring-inset ring-amber-200 px-4 py-3 text-[13px] text-amber-900">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" /> {error}
           </div>
+        )}
 
-          {/* Late Arrivals */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider">Late Arrivals</p>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">{summary.lateCount}</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Exceeded grace threshold</p>
+        {/* KPIs */}
+        <div className="grid gap-3 sm:gap-4 grid-cols-2 xl:grid-cols-4">
+          <Card className="p-5 col-span-2 xl:col-span-1">
+            <div className="flex items-center justify-between">
+              <p className="text-[13px] font-medium text-slate-500">In the office now</p>
+              <UserCheck className="w-4 h-4 text-slate-400" />
             </div>
-            <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-              <Clock className="w-6 h-6" />
-            </div>
-          </div>
-
-          {/* Connected Cameras */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Live CCTV / IP Cameras</p>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">
-                {summary.onlineCameras} <span className="text-sm font-normal text-slate-400">/ {summary.totalCameras}</span>
-              </h3>
-              <p className="text-xs text-emerald-600 mt-0.5 font-medium flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> EZVIZ H7c Streaming
-              </p>
-            </div>
-            <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-              <Cctv className="w-6 h-6" />
-            </div>
-          </div>
-        </div>
-
-        {/* Live Camera Feed Spotlight & Zone Occupancy Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Live Camera Banner (2 Cols) */}
-          <div className="lg:col-span-2 bg-gradient-to-br from-slate-900 to-slate-950 rounded-2xl p-6 text-white border border-slate-800 shadow-lg relative overflow-hidden flex flex-col justify-between">
-            <div className="flex items-start justify-between z-10">
-              <div>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                  EZVIZ Smart Dual-Lens Online
-                </span>
-                <h3 className="text-xl font-bold text-white mt-3">EZVIZ CS-H7c (BC7652775)</h3>
-                <p className="text-xs text-slate-400 mt-1 max-w-md">
-                  Active monitoring stream configured with Dual Channels: Fixed Wide-Angle Lens & Pan-Tilt Tracking Lens.
+            {daily ? (
+              <>
+                <p className="mt-2 flex items-baseline gap-2">
+                  <span className="text-[48px] leading-none font-semibold tracking-tight text-slate-900">{isToday ? inNow : '—'}</span>
+                  <span className="text-[13px] text-slate-500">of {total}</span>
                 </p>
+                <div className="mt-4 flex h-2 gap-[2px] rounded-full overflow-hidden bg-slate-100" role="img" aria-label={`${inNow} in office, ${notSeen} not seen now, ${notIn} not in yet`}>
+                  {[
+                    { v: inNow, c: STATUS.in },
+                    { v: notSeen, c: STATUS.away },
+                    { v: notIn, c: STATUS.out },
+                  ]
+                    .filter((p) => p.v > 0)
+                    .map((p, i) => (
+                      <span key={i} style={{ flexGrow: p.v, background: p.c }} />
+                    ))}
+                </div>
+                <ul className="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-slate-500">
+                  {[
+                    { label: 'In', v: inNow, c: STATUS.in },
+                    { label: 'Not seen now', v: notSeen, c: STATUS.away },
+                    { label: 'Not in', v: notIn, c: STATUS.out },
+                  ].map((l) => (
+                    <li key={l.label} className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-sm" style={{ background: l.c }} />
+                      {l.label} <span className="font-medium text-slate-700 tabular-nums">{l.v}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <Skeleton className="mt-3 h-20" />
+            )}
+          </Card>
+
+          <StatTile
+            label="Arrived today"
+            icon={Footprints}
+            value={daily ? arrived : <Skeleton className="h-7 w-12" />}
+            sub={daily ? (late ? <span>of {total} · <span className="text-rose-600 font-medium">{late} late</span></span> : `of ${total} · no late arrivals`) : undefined}
+          />
+          <StatTile
+            label="Average time inside"
+            icon={Timer}
+            value={daily ? (arrived ? fmtMin(daily.summary.avgInsideMinutes) : '—') : <Skeleton className="h-7 w-20" />}
+            sub={daily ? (arrived ? `${fmtMin(daily.summary.totalInsideMinutes)} in total today` : 'No one has come in yet') : undefined}
+          />
+          <StatTile
+            className="col-span-2 xl:col-span-1"
+            label="Times stepped out"
+            icon={DoorOpen}
+            value={daily ? awayPeriods.length : <Skeleton className="h-7 w-10" />}
+            sub={daily ? (awayPeriods.length ? `Longest ${fmtDur(longestAway)} · away after ${daily.settings.presenceGapMin} min unseen` : 'No one has stepped out') : undefined}
+          />
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          {/* Who's in */}
+          <Card className="lg:col-span-2 overflow-hidden">
+            <CardHeader
+              title="Today"
+              description={daily ? `Everyone, ordered by who is in` : undefined}
+              action={<CardLink href="/dashboard/office-time">Office Time →</CardLink>}
+            />
+            {!daily ? (
+              <div className="px-5 pb-5 space-y-3">
+                {[0, 1, 2].map((i) => (
+                  <Skeleton key={i} className="h-10" />
+                ))}
               </div>
-
-              <Link
-                href="/dashboard/cameras"
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-colors"
-              >
-                <span>Open Live Feed</span>
-                <ArrowUpRight className="w-4 h-4" />
-              </Link>
-            </div>
-
-            <div className="mt-8 pt-6 border-t border-slate-800/80 grid grid-cols-3 gap-4 z-10">
+            ) : rows.length === 0 ? (
+              <EmptyState
+                icon={Users}
+                title="No employees yet"
+                description="Add your team, then let them enrol their face from their phone."
+                action={
+                  canManagePeople ? (
+                    <Link href="/dashboard/employees/register" className={btn.primary}>
+                      <UserPlus className="w-4 h-4" /> Add employee
+                    </Link>
+                  ) : undefined
+                }
+              />
+            ) : (
               <div>
-                <p className="text-[11px] text-slate-400 font-medium">Channel 1 (WL)</p>
-                <p className="text-sm font-semibold text-slate-200">Hashnate -WL</p>
-                <span className="text-[10px] text-emerald-400">Fixed Wide Lens</span>
-              </div>
-              <div>
-                <p className="text-[11px] text-slate-400 font-medium">Channel 2 (PT)</p>
-                <p className="text-sm font-semibold text-slate-200">Hashnate -PT</p>
-                <span className="text-[10px] text-emerald-400">Pan-Tilt Lens</span>
-              </div>
-              <div>
-                <p className="text-[11px] text-slate-400 font-medium">Stream Protocol</p>
-                <p className="text-sm font-semibold text-slate-200">HLS (m3u8)</p>
-                <span className="text-[10px] text-blue-400">Low-Latency Web</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Office Zones Occupancy Card (1 Col) */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-slate-500" />
-                  Office Zones Occupancy
-                </h3>
-                <span className="text-xs font-semibold text-slate-500">
-                  {summary.occupiedZonesCount}/{summary.totalZones} Occupied
-                </span>
-              </div>
-
-              <div className="mt-4 space-y-3.5">
-                {(data?.zones || [
-                  { name: 'Engineering Workspace', currentOccupancy: 8, capacity: 15 },
-                  { name: 'Conference Room Alpha', currentOccupancy: 4, capacity: 8 },
-                  { name: 'Executive Reception', currentOccupancy: 1, capacity: 4 },
-                  { name: 'Breakout Lounge', currentOccupancy: 2, capacity: 6 },
-                ]).map((zone: any) => {
-                  const pct = Math.min(100, Math.round((zone.currentOccupancy / (zone.capacity || 1)) * 100));
-                  return (
-                    <div key={zone.name} className="space-y-1.5">
-                      <div className="flex justify-between text-xs font-medium">
-                        <span className="text-slate-700">{zone.name}</span>
-                        <span className="text-slate-500 font-mono">
-                          {zone.currentOccupancy} / {zone.capacity}
+                <div className="hidden md:grid grid-cols-[minmax(0,1.6fr)_7.5rem_6rem_6rem_minmax(0,1.2fr)] gap-4 px-5 py-2 border-y border-slate-100 bg-slate-50/60 text-[11.5px] font-medium text-slate-500">
+                  <span>Employee</span>
+                  <span>Status</span>
+                  <span>Arrived</span>
+                  <span className="text-right">Inside</span>
+                  <span>
+                    Day{windowRange ? ` · ${fmtTime(new Date(windowRange.start).toISOString())} – ${fmtTime(new Date(windowRange.end).toISOString())}` : ''}
+                  </span>
+                </div>
+                <ul className="divide-y divide-slate-100">
+                  {rows.slice(0, 8).map(({ r, p }) => (
+                    <li key={r.employee.id}>
+                      <Link
+                        href="/dashboard/office-time"
+                        className="grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1.6fr)_7.5rem_6rem_6rem_minmax(0,1.2fr)] items-center gap-x-4 gap-y-1 px-5 py-3 hover:bg-slate-50/70 transition-colors"
+                      >
+                        <span className="flex items-center gap-3 min-w-0">
+                          <Avatar name={r.employee.fullName} id={r.employee.id} />
+                          <span className="min-w-0">
+                            <span className="block text-[13.5px] font-medium text-slate-900 truncate">{r.employee.fullName}</span>
+                            <span className="block text-[12px] text-slate-500 truncate">
+                              {r.employee.jobTitle || r.employee.department || r.employee.employeeCode}
+                            </span>
+                          </span>
                         </span>
-                      </div>
-                      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all ${
-                            pct > 80 ? 'bg-rose-500' : pct > 50 ? 'bg-amber-500' : 'bg-blue-600'
-                          }`}
-                          style={{ width: `${pct}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  );
-                })}
+                        <span className="justify-self-end md:justify-self-start">
+                          <PresenceBadge tone={p.tone}>{p.label}</PresenceBadge>
+                        </span>
+                        <span className="hidden md:flex items-center gap-1.5 text-[13px] text-slate-700 tabular-nums">
+                          {fmtTime(r.firstSeen ?? r.checkIn)}
+                          {r.isLate && <Tag tone="rose">Late</Tag>}
+                        </span>
+                        <span className="hidden md:block text-right text-[13px] font-medium text-slate-900 tabular-nums">{r.date ? fmtDur(r.insideSeconds) : '—'}</span>
+                        <span className="hidden md:block">{windowRange && <DayStrip row={r} start={windowRange.start} end={windowRange.end} />}</span>
+                        <span className="md:hidden col-span-2 text-[12px] text-slate-500 pl-12 tabular-nums">
+                          {r.date ? `Arrived ${fmtTime(r.firstSeen ?? r.checkIn)} · inside ${fmtDur(r.insideSeconds)}` : 'Not seen today'}
+                          {r.isLate ? ' · late' : ''}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+                {rows.length > 8 && (
+                  <Link href="/dashboard/office-time" className="flex items-center justify-center gap-1 py-3 border-t border-slate-100 text-[12.5px] font-medium text-slate-600 hover:text-slate-900">
+                    Show all {rows.length} <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                )}
               </div>
-            </div>
+            )}
+          </Card>
 
-            <div className="mt-6 pt-4 border-t border-slate-100">
-              <Link
-                href="/dashboard/analytics"
-                className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center justify-between"
-              >
-                <span>View Full Occupancy Analytics</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
+          <div className="space-y-4">
+            {/* Cameras */}
+            <Card>
+              <CardHeader title="Cameras" action={can('cameras.live') ? <CardLink href="/dashboard/cameras">Live view →</CardLink> : undefined} />
+              <ul className="px-2 pb-3">
+                {!cameras ? (
+                  <li className="px-3 py-2">
+                    <Skeleton className="h-9" />
+                  </li>
+                ) : cameras.length === 0 ? (
+                  <li className="px-3 py-2 text-[13px] text-slate-500">
+                    No cameras yet.{' '}
+                    <Link href="/dashboard/settings?tab=cameras" className="font-medium text-blue-600 hover:text-blue-700">
+                      Add one in Settings
+                    </Link>
+                  </li>
+                ) : (
+                  cameras.flatMap((cam) =>
+                    (cam.channels?.length ? cam.channels : [{ channelNo: 1, channelName: cam.name }]).map((ch: any) => {
+                      const st = channelState(cam.id, ch.channelNo);
+                      const live = health !== 'offline' && st?.state === 'running';
+                      const label =
+                        ch.recognitionEnabled === false
+                          ? 'Recognition off'
+                          : health === 'offline' || !st
+                          ? 'Not watched'
+                          : st.state === 'running'
+                          ? 'Live'
+                          : st.state === 'error'
+                          ? 'Error'
+                          : 'Connecting';
+                      const dot = live ? 'bg-emerald-500' : st?.state === 'error' ? 'bg-rose-500' : health === 'offline' || !st ? 'bg-slate-300' : 'bg-amber-500';
+                      return (
+                        <li key={`${cam.id}-${ch.channelNo}`} className="flex items-center gap-3 px-3 py-2 rounded-lg">
+                          <span className="w-9 h-9 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
+                            <Cctv className="w-[18px] h-[18px]" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[13px] font-medium text-slate-800 truncate">{ch.channelName || `Channel ${ch.channelNo}`}</span>
+                            <span className="block text-[12px] text-slate-500 truncate">
+                              {st?.lastFrameAt && health !== 'offline' ? `Last frame ${timeAgo(st.lastFrameAt, now)}` : cam.name}
+                            </span>
+                          </span>
+                          <span className="flex items-center gap-1.5 text-[12px] font-medium text-slate-600">
+                            <span className={`w-1.5 h-1.5 rounded-full ${dot}`} /> {label}
+                          </span>
+                        </li>
+                      );
+                    })
+                  )
+                )}
+              </ul>
+            </Card>
+
+            {/* Activity */}
+            <Card>
+              <CardHeader title="Recent sightings" description="Latest faces recognised by the cameras" />
+              {!events ? (
+                <div className="px-5 pb-5 space-y-3">
+                  <Skeleton className="h-8" />
+                  <Skeleton className="h-8" />
+                </div>
+              ) : events.length === 0 ? (
+                <EmptyState icon={ScanFace} title="No sightings yet" description="Recognised faces will appear here as people pass the cameras." />
+              ) : (
+                <ul className="px-2 pb-3">
+                  {events.slice(0, 6).map((e) => (
+                    <li key={e.id} className="flex items-center gap-3 px-3 py-2">
+                      <Avatar size="sm" name={e.employee?.fullName ?? '?'} id={e.employeeId} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13px] text-slate-800 truncate">
+                          <span className="font-medium">{e.employee?.fullName ?? 'Someone'}</span>{' '}
+                          <span className="text-slate-500">{EVENT_VERB[e.action] ?? 'was seen'}</span>
+                        </span>
+                        <span className="block text-[11.5px] text-slate-400">Channel {e.channelNo}</span>
+                      </span>
+                      <span className="text-[12px] text-slate-500 tabular-nums whitespace-nowrap">{timeAgo(e.seenAt, now)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
           </div>
         </div>
 
-        {/* DAILY EMPLOYEE TRACKING SECTION */}
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
-                <h3 className="text-base font-bold text-slate-900 uppercase tracking-wide">
-                  Daily Employee Tracking
-                </h3>
-              </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Real-time permanent identity verification, live zone location, and automatic working-hour calculation.
-              </p>
-            </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Card className={showSetup ? 'lg:col-span-2' : 'lg:col-span-3'}>
+            {week && daily ? (
+              <WeekChart title="Time in the office this week" description="Total for everyone, per day" data={week} today={daily.today} />
+            ) : (
+              <>
+                <CardHeader title="Time in the office this week" description="Total for everyone, per day" />
+                <Skeleton className="mx-5 mb-5 h-56" />
+              </>
+            )}
+          </Card>
 
-            <div className="flex items-center gap-4">
-              <span className="flex items-center gap-1.5 text-xs text-emerald-600 font-medium">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Live Synchronized
-              </span>
-              <Link
-                href="/dashboard/work-hours"
-                className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1"
-              >
-                <span>Open Working-Hour Console</span>
-                <ChevronRight className="w-4 h-4" />
-              </Link>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50/75 text-[11px] font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200">
-                  <th className="py-3 px-6">Employee</th>
-                  <th className="py-3 px-4">Current Zone</th>
-                  <th className="py-3 px-4">Freshness</th>
-                  <th className="py-3 px-4">First Observed</th>
-                  <th className="py-3 px-4">Official Check-In</th>
-                  <th className="py-3 px-4">Working Room</th>
-                  <th className="py-3 px-4">Lunch Room</th>
-                  <th className="py-3 px-4">Outside</th>
-                  <th className="py-3 px-4">Unknown</th>
-                  <th className="py-3 px-6">Total Attendance</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {dailyEmployees.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className="py-8 text-center text-slate-400">
-                      No active employee tracking sessions for today.
-                    </td>
-                  </tr>
-                ) : (
-                  dailyEmployees.map((emp) => {
-                    const badge = ZONE_BADGES[emp.currentZoneId] || ZONE_BADGES.UNKNOWN;
-                    const durs = emp.durations;
-
-                    return (
-                      <tr key={emp.employeeId} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3.5 px-6 font-semibold text-slate-900">
-                          <Link href="/dashboard/work-hours" className="hover:text-blue-600">
-                            {emp.employeeName}
-                          </Link>
-                          <span className="block text-[10px] text-slate-400 font-mono font-normal">
-                            {emp.employeeCode} • {emp.departmentName}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-medium border text-[11px] ${badge.bg} ${badge.border} ${badge.text}`}>
-                            {badge.label}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          {emp.currentObservationStatus === 'OBSERVED_RECENTLY' ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-600 font-medium">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                              Live ({durs.secondsSinceLastSeen}s)
-                            </span>
-                          ) : emp.currentObservationStatus === 'NOT_RECENTLY_OBSERVED' ? (
-                            <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                              Stale ({Math.round(durs.secondsSinceLastSeen / 60)}m)
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">Not seen</span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 font-mono text-slate-600">
-                          {emp.firstObservedAt ? new Date(emp.firstObservedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
-                        </td>
-                        <td className="py-3.5 px-4 font-mono text-slate-600">
-                          {emp.attendanceCheckInAt ? new Date(emp.attendanceCheckInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
-                        </td>
-                        <td className="py-3.5 px-4 font-mono font-semibold text-emerald-700">
-                          {durs.workRoomFormatted}
-                        </td>
-                        <td className="py-3.5 px-4 font-mono text-amber-700">
-                          {durs.lunchRoomSeconds > 0 ? durs.lunchRoomFormatted : '—'}
-                        </td>
-                        <td className="py-3.5 px-4 font-mono text-purple-700">
-                          {durs.outsideOfficeSeconds > 0 ? durs.outsideOfficeFormatted : '—'}
-                        </td>
-                        <td className="py-3.5 px-4 font-mono text-rose-700">
-                          {durs.unknownSeconds > 0 ? durs.unknownFormatted : '0m'}
-                        </td>
-                        <td className="py-3.5 px-6 font-mono font-bold text-slate-900">
-                          {durs.officialAttendanceSeconds > 0 ? durs.officialAttendanceFormatted : 'Pending'}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+          {showSetup && (
+            <Card>
+              <CardHeader title="Setup" description={`${setupDone} of ${setup.length} done`} />
+              <ul className="px-2 pb-3">
+                {setup.map((s) => (
+                  <li key={s.href}>
+                    <Link href={s.href} className="flex items-start gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 transition-colors">
+                      {s.done ? <CheckCircle2 className="w-[18px] h-[18px] mt-px text-emerald-600 shrink-0" /> : <Circle className="w-[18px] h-[18px] mt-px text-slate-300 shrink-0" />}
+                      <span className="min-w-0">
+                        <span className={`block text-[13px] font-medium ${s.done ? 'text-slate-500' : 'text-slate-900'}`}>{s.title}</span>
+                        <span className="block text-[12px] text-slate-500">{s.detail}</span>
+                      </span>
+                      {!s.done && <ArrowRight className="w-4 h-4 mt-0.5 ml-auto text-slate-400 shrink-0" />}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
         </div>
       </main>
     </>
   );
 }
-

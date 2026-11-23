@@ -109,7 +109,20 @@ npm run dev
 2. Sign in with the seeded Super Administrator credentials:
    - **Email**: `admin@worksight.io`
    - **Password**: `Admin@123456`
-3. Navigate to **Live Cameras** (`/dashboard/cameras`) to view the live EZVIZ H7c stream with dual-lens switching (Channel 1 Wide Lens vs Channel 2 Pan-Tilt Lens).
+
+   **Change this password straight away** (key icon next to your name in the sidebar): it is published here.
+   Then give everyone their own login in **Users & access** (access levels: Super admin, Admin, HR manager,
+   Supervisor, Viewer, Employee; see `docs/WORKSIGHT_API.md` section 7). Each new person gets a temporary
+   password and chooses their own at first sign-in. An Employee login sees only their own *My time* page.
+3. Open **Settings → Cameras → Add a camera** (`/dashboard/settings`) and pick how it connects:
+   - *Find on this network*: most IP cameras and recorders (ONVIF); just sign in with the camera's login.
+   - *IP camera or recorder*: Hikvision, Dahua, Uniview, Reolink, TP-Link, Axis, EZVIZ (local), or any RTSP address.
+   - *EZVIZ cloud account*: enter the App Key / App Secret under *EZVIZ account* first.
+   - *USB or built-in camera*, or a *picture or stream link* (JPEG snapshot, MJPEG, HLS).
+
+   **Test connection** shows a picture before you save. Recognition starts within 30 seconds; no file editing or
+   restart needed. Each RTSP/USB lens is decoded continuously by the AI service, so plan CPU for the number of lenses.
+4. Navigate to **Live Cameras** (`/dashboard/cameras`) to view the live stream of each lens.
 
 ---
 
@@ -133,25 +146,26 @@ Manual check-in/out keeps working alongside it; the ledger shows whether each re
 **Testing without the camera:** set `SOURCE_OVERRIDE` in `ai-service/.env` to `webcam:0`, a video file, or a folder of
 images, and the worker reads from there instead (attributed to the first camera).
 
-**Tuning (ai-service/.env):** `FRAME_SOURCE` (`auto`/`hls`/`snapshot`), `WATCH_CHANNELS` (e.g. `1` for the wide lens
-only), `MATCH_THRESHOLD`, `CONFIRM_FRAMES`, `MIN_FACE_SIZE` (pixels; smaller = recognise people further away, less
-reliably). **(backend/.env):** `AUTO_CHECKOUT_MIN_GAP_MIN`, `RECOGNITION_DEDUP_SEC`, `MAX_FACE_SAMPLES`.
+**Tuning:** everything is on the dashboard's **Settings** page (admins only) and applies within 30 seconds:
+which lenses recognise faces, match scores (including the stricter score for distant faces), frames needed to
+confirm, video source, away/check-out timing and the phone QR link. The matching `.env` values are only defaults
+used until something is saved there. See `docs/WORKSIGHT_API.md` section 6.
 
 **Limitations:** no liveness / anti-spoofing check (a printed photo of an enrolled employee could be recognised), so
 treat camera attendance as convenience, not as a security control. Accuracy drops with masks, strong backlight, and
 faces smaller than ~60 px (people far from the lens). Mount or aim a lens at the entrance at roughly face height.
 
-### Work hours (time inside the office)
-*Work Hours* in the sidebar shows, per employee, how long they were actually inside: while they are in view the AI
-service reports them about once a minute, sightings less than `PRESENCE_GAP_MIN` (15) minutes apart are joined into one
-stay, and longer gaps count as **away** (lunch, errands, gone home). The daily view shows who is in the office now,
+### Office time (time inside the office)
+*Office Time* in the sidebar shows, per employee, how long they were actually inside: while they are in view the AI
+service reports them about once a minute, sightings closer together than *Settings → Attendance → Count someone as
+away after* (default 2 minutes) are joined into one stay, and longer gaps count as **away** (lunch, errands, gone home). The daily view shows who is in the office now,
 first-in / last-seen, time inside vs. their schedule, time away and a timeline of each stay; the weekly/monthly view
 totals hours per employee and exports CSV. Manual check-ins (no camera sightings) are shown as first-in → check-out.
 For accurate figures a lens must see people **at their desks** (e.g. the H7c pan-tilt lens on the work area), not
 only at the door: if the camera only watches the entrance, people are counted as away while sitting outside its view.
 
-**EZVIZ credentials:** the backend renews the EZVIZ access token automatically using `EZVIZ_APP_KEY` /
-`EZVIZ_APP_SECRET`. If they are wrong it can only use `EZVIZ_ACCESS_TOKEN` until that expires, after which live video,
+**EZVIZ credentials:** set them in *Settings → EZVIZ account* (stored encrypted; *Test connection* checks them).
+The backend renews the EZVIZ access token automatically. If they are wrong it can only use `EZVIZ_ACCESS_TOKEN` until that expires, after which live video,
 snapshots and automatic attendance stop (the Attendance page shows the EZVIZ error). Live-stream links are requested
 with a 2-hour lifetime (`EZVIZ_STREAM_EXPIRE_SEC`).
 

@@ -11,7 +11,7 @@ def _f(name: str, default: float) -> float:
 
 
 class Settings:
-    BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:5000/api").rstrip("/")
+    BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:5000/api").rstrip("/")
     # Shared secret for service-to-service calls (must equal AI_SERVICE_KEY in backend/.env).
     AI_SERVICE_KEY = os.getenv("AI_SERVICE_KEY", "")
     PORT = int(os.getenv("PORT", "8000"))
@@ -33,15 +33,22 @@ class Settings:
     HLS_RETRY_AFTER_SEC = _f("HLS_RETRY_AFTER_SEC", 300)  # after falling back to snapshots
     STREAM_URL_REFRESH_SEC = _f("STREAM_URL_REFRESH_SEC", 1800)
 
+    # The recognition values below are only defaults: the dashboard's Settings page overrides them while running.
     MIN_FACE_SIZE = int(os.getenv("MIN_FACE_SIZE", "50"))  # pixels
     MATCH_THRESHOLD = _f("MATCH_THRESHOLD", 0.46)  # cosine similarity (strict SFace reference)
     MATCH_MARGIN = _f("MATCH_MARGIN", 0.08)  # best must beat other employees by this much (ambiguity guard)
+    # Small, distant faces give unreliable matches, so they must match more strongly. Measured on the office
+    # cameras (Nov 2026): every false match was a face with eyes < 32 px apart scoring < 0.56, while real
+    # matches came from larger faces or scored higher. Pixels are in the analysed frame.
+    SMALL_FACE_EYE_PX = _f("SMALL_FACE_EYE_PX", 32)
+    SMALL_FACE_MATCH_THRESHOLD = _f("SMALL_FACE_MATCH_THRESHOLD", 0.57)
     CONFIRM_FRAMES = int(os.getenv("CONFIRM_FRAMES", "2"))  # matches needed ...
     CONFIRM_WINDOW_SEC = _f("CONFIRM_WINDOW_SEC", 10)  # ... within this window
     REPORT_COOLDOWN_SEC = _f("REPORT_COOLDOWN_SEC", 60)  # per employee, avoid flooding the backend
 
     GALLERY_REFRESH_SEC = _f("GALLERY_REFRESH_SEC", 30)
-    CAMERA_REFRESH_SEC = _f("CAMERA_REFRESH_SEC", 300)
+    CAMERA_REFRESH_SEC = _f("CAMERA_REFRESH_SEC", 30)  # cameras added/changed in Settings are picked up this fast
+    RUNTIME_CONFIG_REFRESH_SEC = _f("RUNTIME_CONFIG_REFRESH_SEC", 30)  # recognition settings from the dashboard
 
 
 settings = Settings()

@@ -1,298 +1,185 @@
 'use client';
 
+/**
+ * Attendance: today's check-ins (from the cameras or entered by hand), late arrivals, who is absent,
+ * and the signed-in employee's own check-in / check-out. Live presence lives on Overview / Office Time.
+ */
+
 import React, { useEffect, useState } from 'react';
-import { CalendarCheck, Clock, CheckCircle2, AlertTriangle, UserX, UserCheck, ScanFace, Hand, LogIn, LogOut, ShieldCheck, Info } from 'lucide-react';
+import Link from 'next/link';
+import { AlertTriangle, CalendarCheck, Clock, Hand, LogIn, LogOut, ScanFace, UserCheck, UserX } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { api } from '@/lib/api';
-import { AutoAttendancePanel } from '@/components/AutoAttendancePanel';
-import { RealTimePresenceBoard } from '@/components/RealTimePresenceBoard';
+import { Avatar, Card, CardHeader, CardLink, EmptyState, PresenceBadge, Skeleton, StatTile, btn } from '@/components/ui';
+import { fmtDate, fmtMin, fmtTime } from '@/lib/format';
 
 export default function AttendancePage() {
   const [data, setData] = useState<any>(null);
+  const [employees, setEmployees] = useState<any[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [mySession, setMySession] = useState<any>(null);
-  const [sessionActionLoading, setSessionActionLoading] = useState(false);
+  const [sessionBusy, setSessionBusy] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-
-  const fetchSessionStatus = async () => {
-    try {
-      const res = await api.getMyTodaySession();
-      if (res.success && res.data) {
-        setMySession(res.data);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
 
   const fetchAttendance = async (silent = false) => {
     try {
       if (!silent) setLoading(true);
       const res = await api.getTodayAttendance();
-      if (res.success) {
-        setData(res);
-      }
-      await fetchSessionStatus();
-    } catch (err) {
-      console.error(err);
+      if (res.success) setData(res);
+      setError(null);
+      api.getMyTodaySession().then((r) => r.success && setMySession(r.data)).catch(() => {});
+    } catch (err: any) {
+      setError(err.message || 'Could not load attendance');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCheckIn = async () => {
-    try {
-      setSessionActionLoading(true);
-      setActionMessage(null);
-      const res = await api.checkIn(mySession?.employee?.id);
-      if (res.success) {
-        setActionMessage(`Checked in successfully at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
-        await fetchAttendance(true);
-      }
-    } catch (err: any) {
-      setActionMessage(err.message || 'Check-in failed');
-    } finally {
-      setSessionActionLoading(false);
-    }
-  };
-
-  const handleCheckOut = async () => {
-    try {
-      setSessionActionLoading(true);
-      setActionMessage(null);
-      const res = await api.checkOut(mySession?.employee?.id);
-      if (res.success) {
-        setActionMessage(`Checked out successfully at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
-        await fetchAttendance(true);
-      }
-    } catch (err: any) {
-      setActionMessage(err.message || 'Check-out failed');
-    } finally {
-      setSessionActionLoading(false);
-    }
-  };
-
   useEffect(() => {
     fetchAttendance();
-    // Keep the ledger current as the camera marks people in/out.
+    api.getEmployees().then((r) => setEmployees(r.data.filter((e: any) => e.isActive))).catch(() => setEmployees([]));
     const t = setInterval(() => fetchAttendance(true), 30000);
     return () => clearInterval(t);
   }, []);
 
-  const stats = data?.stats || {
-    totalEmployees: 5,
-    presentCount: 3,
-    lateCount: 1,
-    absentCount: 2,
+  const runSession = async (kind: 'in' | 'out') => {
+    try {
+      setSessionBusy(true);
+      setActionMessage(null);
+      const res = kind === 'in' ? await api.checkIn(mySession?.employee?.id) : await api.checkOut(mySession?.employee?.id);
+      if (res.success) {
+        setActionMessage(`${kind === 'in' ? 'Checked in' : 'Checked out'} at ${fmtTime(new Date().toISOString())}`);
+        await fetchAttendance(true);
+      }
+    } catch (err: any) {
+      setActionMessage(err.message || `Check-${kind} failed`);
+    } finally {
+      setSessionBusy(false);
+    }
   };
 
-  const records = data?.records || [];
+  const stats = data?.stats;
+  const records: any[] = data?.records || [];
+  const presentIds = new Set(records.map((r) => r.employeeId || r.employee?.id));
+  const absent = (employees ?? []).filter((e) => !presentIds.has(e.id));
 
   return (
     <>
-      <Header
-        title="Attendance Management & Daily Ledger"
-        subtitle="Verified employee check-in logs, arrival timestamps, and work hours"
-      />
+      <Header subtitle={data?.date ? fmtDate(data.date, { weekday: 'long', day: 'numeric', month: 'long' }) : undefined} />
 
-      <main className="p-8 space-y-6">
-        {/* KPI Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-semibold text-slate-500 uppercase">Total Employees</p>
-              <h4 className="text-xl font-bold text-slate-900 mt-0.5">{stats.totalEmployees}</h4>
-            </div>
-            <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-              <CalendarCheck className="w-5 h-5" />
-            </div>
+      <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 space-y-4 max-w-[1440px] w-full mx-auto">
+        {error && (
+          <div className="flex items-center gap-3 rounded-xl bg-amber-50 ring-1 ring-inset ring-amber-200 px-4 py-3 text-[13px] text-amber-900">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" /> {error}
           </div>
+        )}
 
-          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-semibold text-emerald-600 uppercase">Present Today</p>
-              <h4 className="text-xl font-bold text-slate-900 mt-0.5">{stats.presentCount}</h4>
-            </div>
-            <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <UserCheck className="w-5 h-5" />
-            </div>
-          </div>
-
-          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-semibold text-amber-600 uppercase">Late Arrivals</p>
-              <h4 className="text-xl font-bold text-slate-900 mt-0.5">{stats.lateCount}</h4>
-            </div>
-            <div className="w-9 h-9 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
-              <Clock className="w-5 h-5" />
-            </div>
-          </div>
-
-          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-semibold text-rose-600 uppercase">Absent</p>
-              <h4 className="text-xl font-bold text-slate-900 mt-0.5">{stats.absentCount}</h4>
-            </div>
-            <div className="w-9 h-9 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
-              <UserX className="w-5 h-5" />
-            </div>
-          </div>
+        <div className="grid gap-3 sm:gap-4 grid-cols-2 xl:grid-cols-4">
+          <StatTile label="Employees" icon={CalendarCheck} value={stats ? stats.totalEmployees : <Skeleton className="h-7 w-10" />} />
+          <StatTile
+            label="Present"
+            icon={UserCheck}
+            value={stats ? stats.presentCount : <Skeleton className="h-7 w-10" />}
+            sub={stats && stats.totalEmployees ? `${Math.round((stats.presentCount / stats.totalEmployees) * 100)}% of the team` : undefined}
+          />
+          <StatTile label="Late" icon={Clock} value={stats ? stats.lateCount : <Skeleton className="h-7 w-10" />} sub={stats ? 'After their start time' : undefined} />
+          <StatTile label="Absent" icon={UserX} value={stats ? stats.absentCount : <Skeleton className="h-7 w-10" />} sub={stats ? 'Not checked in today' : undefined} />
         </div>
 
-        {/* Employee Work Session Action Station (System B: Official Attendance) */}
-        <div className="bg-gradient-to-r from-slate-900 to-indigo-950 rounded-2xl p-6 text-white shadow-md border border-slate-800">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase bg-blue-500/20 text-blue-300 border border-blue-400/30">
-                  System B — Official Work Session
-                </span>
-                <span className="flex items-center gap-1 text-[11px] text-slate-300">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> Authorized Time Tracking
-                </span>
+        {mySession?.employee && (
+          <Card className="p-5">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <Avatar name={mySession.employee.fullName} id={mySession.employee.id} />
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold text-slate-900">Your work session</p>
+                  <p className="text-[12.5px] text-slate-500">
+                    {mySession.openSession
+                      ? `${mySession.employee.fullName} · checked in since ${fmtTime(mySession.openSession.checkInAt)}`
+                      : `${mySession.employee.fullName} · not checked in`}
+                    . The cameras record sightings on their own; use this for your official working time.
+                  </p>
+                </div>
               </div>
-              <h2 className="text-xl font-bold text-white">
-                {mySession?.employee?.fullName || 'Employee Attendance Console'}
-              </h2>
-              <p className="text-xs text-slate-400 flex items-center gap-1.5">
-                <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                Face recognition provides observational evidence. Official working hours require explicit Check-In / Check-Out.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              {mySession?.openSession ? (
-                <div className="flex items-center gap-4 bg-slate-800/80 px-4 py-2.5 rounded-xl border border-emerald-500/30">
-                  <div className="text-right">
-                    <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider block">Currently Checked In</span>
-                    <span className="text-xs font-mono font-bold text-slate-200">
-                      Since {new Date(mySession.openSession.checkInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                  <button
-                    onClick={handleCheckOut}
-                    disabled={sessionActionLoading}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition shadow-sm"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    {sessionActionLoading ? 'Checking out...' : 'Check Out Now'}
-                  </button>
-                </div>
+              {mySession.openSession ? (
+                <button type="button" onClick={() => runSession('out')} disabled={sessionBusy} className={btn.secondary}>
+                  <LogOut className="w-4 h-4" /> {sessionBusy ? 'Checking out…' : 'Check out'}
+                </button>
               ) : (
-                <div className="flex items-center gap-4 bg-slate-800/80 px-4 py-2.5 rounded-xl border border-slate-700">
-                  <div className="text-right">
-                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Session Status</span>
-                    <span className="text-xs font-bold text-slate-300">Checked Out / Idle</span>
-                  </div>
-                  <button
-                    onClick={handleCheckIn}
-                    disabled={sessionActionLoading}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition shadow-md"
-                  >
-                    <LogIn className="w-4 h-4" />
-                    {sessionActionLoading ? 'Checking in...' : 'Check In Now'}
-                  </button>
-                </div>
+                <button type="button" onClick={() => runSession('in')} disabled={sessionBusy} className={btn.primary}>
+                  <LogIn className="w-4 h-4" /> {sessionBusy ? 'Checking in…' : 'Check in'}
+                </button>
               )}
             </div>
-          </div>
-          {actionMessage && (
-            <div className="mt-3 text-xs px-3 py-1.5 bg-white/10 rounded-lg text-slate-200 border border-white/10">
-              {actionMessage}
+            {actionMessage && <p className="mt-3 text-[12.5px] text-slate-600">{actionMessage}</p>}
+          </Card>
+        )}
+
+        <Card className="overflow-hidden">
+          <CardHeader title="Today’s check-ins" description="Arrival and last time seen, per person" action={<CardLink href="/dashboard/office-time">Time inside →</CardLink>} />
+          {loading ? (
+            <div className="px-5 pb-5 space-y-3">
+              <Skeleton className="h-11" />
+              <Skeleton className="h-11" />
             </div>
-          )}
-        </div>
-
-        {/* Real-Time Office Presence Monitor (System A: Observational Evidence) */}
-        <RealTimePresenceBoard />
-
-        <AutoAttendancePanel onActivity={() => fetchAttendance(true)} />
-
-        {/* Ledger Table */}
-        <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900">Today&apos;s Attendance Logs</h3>
-            <span className="text-xs font-mono text-slate-500">Date: {data?.date || new Date().toISOString().split('T')[0]}</span>
-          </div>
-
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
-              <tr>
-                <th className="py-3.5 px-4">Employee</th>
-                <th className="py-3.5 px-4">Department</th>
-                <th className="py-3.5 px-4">Arrival (Check-In)</th>
-                <th className="py-3.5 px-4">Departure (Check-Out)</th>
-                <th className="py-3.5 px-4">Total Office Time</th>
-                <th className="py-3.5 px-4">Status</th>
-                <th className="py-3.5 px-4">Source</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {loading ? (
+          ) : records.length === 0 ? (
+            <EmptyState icon={CalendarCheck} title="No one has checked in yet" description="Arrivals appear here as soon as a camera recognises someone, or when they check in by hand." />
+          ) : (
+            <table className="w-full text-left text-[13px]">
+              <thead className="bg-slate-50/70 border-y border-slate-100 text-[11.5px] text-slate-500">
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
-                    Loading attendance ledger...
-                  </td>
+                  <th className="py-2.5 px-5 font-medium">Employee</th>
+                  <th className="py-2.5 px-3 font-medium">Arrived</th>
+                  <th className="py-2.5 px-3 font-medium hidden sm:table-cell">Left / last seen</th>
+                  <th className="py-2.5 px-3 font-medium hidden md:table-cell text-right">Span</th>
+                  <th className="py-2.5 px-3 font-medium">Status</th>
+                  <th className="py-2.5 px-5 font-medium hidden lg:table-cell">Recorded by</th>
                 </tr>
-              ) : records.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
-                    No attendance records logged for today
-                  </td>
-                </tr>
-              ) : (
-                records.map((rec: any) => (
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {records.map((rec) => (
                   <tr key={rec.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="py-3 px-4 font-semibold text-slate-900">
-                      {rec.employee?.fullName || 'Unknown Employee'}
+                    <td className="py-3 px-5">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Avatar name={rec.employee?.fullName ?? '?'} id={rec.employee?.id} />
+                        <div className="min-w-0">
+                          <p className="font-medium text-slate-900 truncate">{rec.employee?.fullName ?? 'Unknown'}</p>
+                          <p className="text-[12px] text-slate-500 truncate">{rec.employee?.department?.name ?? rec.employee?.employeeCode ?? ''}</p>
+                        </div>
+                      </div>
                     </td>
-                    <td className="py-3 px-4 text-slate-500">
-                      {rec.employee?.department?.name || 'General'}
-                    </td>
-                    <td className="py-3 px-4 font-mono">
-                      {rec.checkIn ? new Date(rec.checkIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
-                    </td>
-                    <td className="py-3 px-4 font-mono">
-                      {rec.checkOut ? (
-                        <>
-                          {new Date(rec.checkOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          {rec.source === 'AUTO' && <span className="ml-1 text-[10px] text-slate-400 font-sans">last seen</span>}
-                        </>
-                      ) : 'In Office'}
-                    </td>
-                    <td className="py-3 px-4 text-slate-600">
-                      {rec.totalMinutes > 0 ? `${Math.floor(rec.totalMinutes / 60)}h ${rec.totalMinutes % 60}m` : 'In Progress'}
-                    </td>
-                    <td className="py-3 px-4">
-                      {rec.isLate ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                          <AlertTriangle className="w-3 h-3" /> Late Arrival
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          <CheckCircle2 className="w-3 h-3" /> Present On Time
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4">
-                      {rec.source === 'AUTO' ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700">
-                          <ScanFace className="w-3.5 h-3.5" /> Camera
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] text-slate-500">
-                          <Hand className="w-3.5 h-3.5" /> Manual
-                        </span>
-                      )}
+                    <td className="py-3 px-3 tabular-nums text-slate-800">{fmtTime(rec.checkIn)}</td>
+                    <td className="py-3 px-3 tabular-nums text-slate-600 hidden sm:table-cell">{rec.checkOut ? fmtTime(rec.checkOut) : 'Still in'}</td>
+                    <td className="py-3 px-3 tabular-nums text-right text-slate-800 hidden md:table-cell">{rec.totalMinutes > 0 ? fmtMin(rec.totalMinutes) : '—'}</td>
+                    <td className="py-3 px-3">{rec.isLate ? <PresenceBadge tone="away">Late</PresenceBadge> : <PresenceBadge tone="in">On time</PresenceBadge>}</td>
+                    <td className="py-3 px-5 hidden lg:table-cell">
+                      <span className="inline-flex items-center gap-1.5 text-[12.5px] text-slate-600">
+                        {rec.source === 'AUTO' ? <ScanFace className="w-4 h-4 text-slate-400" /> : <Hand className="w-4 h-4 text-slate-400" />}
+                        {rec.source === 'AUTO' ? 'Camera' : 'By hand'}
+                      </span>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+
+        {employees && absent.length > 0 && (
+          <Card>
+            <CardHeader title="Not in today" description={`${absent.length} of ${employees.length} employees haven’t been seen`} />
+            <ul className="px-5 pb-5 flex flex-wrap gap-2">
+              {absent.map((e) => (
+                <li key={e.id} className="inline-flex items-center gap-2 h-9 pl-1 pr-3 rounded-full bg-slate-50 ring-1 ring-inset ring-slate-200">
+                  <Avatar size="sm" name={e.fullName} id={e.id} />
+                  <span className="text-[13px] text-slate-700">{e.fullName}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
       </main>
     </>
   );
 }
-

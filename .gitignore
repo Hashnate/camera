@@ -47,6 +47,13 @@ desktop.ini
 .vscode/
 .idea/
 
+# Self-signed HTTPS certificate + private key for phones on the office Wi-Fi (frontend/scripts/lan-https.mjs)
+frontend/.certs/
+
+# Employee face photos (biometric data): enrolment previews and phone photos awaiting HR review
+backend/uploads/faces/
+backend/pending_enrollments/
+
 # Downloaded face-recognition models (fetch with ai-service/download_models.py)
 ai-service/models/
 

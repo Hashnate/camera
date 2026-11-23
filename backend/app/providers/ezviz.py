@@ -56,24 +56,66 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+DEFAULT_BASE_URL = "https://open.ezvizlife.com"
+SETUP_HINT = "Add the EZVIZ App Key and App Secret in Settings > EZVIZ account."
+
+
+def _post_to(base_url: str, path: str, data: dict, timeout: float = 10.0) -> dict:
+    try:
+        resp = httpx.post(f"{base_url}{path}", data=data, timeout=timeout)
+    except httpx.HTTPError as exc:
+        raise EZVIZError(f"Could not reach EZVIZ at {base_url} ({exc.__class__.__name__})")
+    try:
+        return resp.json()
+    except ValueError:
+        raise EZVIZError(f"Non-JSON response from EZVIZ ({resp.status_code})")
+
+
+def request_token(app_key: str, app_secret: str, base_url: str) -> tuple[str, int]:
+    """Exchange App Key + Secret for an access token: (token, expiry epoch ms). Raises EZVIZError."""
+    if not app_key or not app_secret:
+        raise EZVIZError(f"EZVIZ camera account is not set up. {SETUP_HINT}")
+    body = _post_to(base_url, "/api/lapp/token/get", {"appKey": app_key, "appSecret": app_secret})
+    data = body.get("data") or {}
+    if str(body.get("code")) == "200" and data.get("accessToken"):
+        return data["accessToken"], data.get("expireTime") or _now_ms() + 7 * 24 * 3600 * 1000
+    raise EZVIZError(f"EZVIZ rejected the App Key / Secret: [{body.get('code')}] {body.get('msg') or 'Unknown error'}")
+
+
 class EZVIZProvider:
+    """Talks to EZVIZ with the account saved in Settings (falls back to backend/.env on old installs)."""
+
     def __init__(self) -> None:
-        self.app_key = settings.EZVIZ_APP_KEY
-        self.app_secret = settings.EZVIZ_APP_SECRET
-        self.base_url = settings.EZVIZ_API_BASE_URL.rstrip("/")
         self._token: Optional[str] = None
         self._token_expires_at = 0  # epoch ms
+        self._token_creds: Optional[tuple] = None  # the account the cached token belongs to
         if settings.EZVIZ_ACCESS_TOKEN:
             self._token = settings.EZVIZ_ACCESS_TOKEN
             # Assume a pre-supplied token is good for 6 days.
             self._token_expires_at = _now_ms() + 6 * 24 * 3600 * 1000
+            self._token_creds = (
+                settings.EZVIZ_APP_KEY,
+                settings.EZVIZ_APP_SECRET,
+                (settings.EZVIZ_API_BASE_URL or DEFAULT_BASE_URL).rstrip("/"),
+            )
+
+    @staticmethod
+    def _creds() -> tuple[str, str, str]:
+        from app.services import settings_store
+
+        c = settings_store.get("ezviz")
+        return c["appKey"], c["appSecret"], (c["apiBaseUrl"] or DEFAULT_BASE_URL).rstrip("/")
+
+    @property
+    def base_url(self) -> str:
+        return self._creds()[2]
+
+    def is_configured(self) -> bool:
+        key, secret, _ = self._creds()
+        return bool(key and secret) or bool(self._token and self._token_creds == self._creds())
 
     def _post(self, path: str, data: dict, timeout: float = 10.0) -> dict:
-        resp = httpx.post(f"{self.base_url}{path}", data=data, timeout=timeout)
-        try:
-            return resp.json()
-        except ValueError:
-            raise EZVIZError(f"Non-JSON response from EZVIZ ({resp.status_code})")
+        return _post_to(self.base_url, path, data, timeout)
 
     TOKEN_EXPIRED_CODES = {"10002"}
 
@@ -86,27 +128,22 @@ class EZVIZProvider:
             try:
                 token = self.authenticate()
             except Exception as exc:
-                raise EZVIZError(
-                    f"EZVIZ access token expired and could not be renewed ({exc}). "
-                    "Fix EZVIZ_APP_KEY / EZVIZ_APP_SECRET (or set a fresh EZVIZ_ACCESS_TOKEN) in backend/.env "
-                    "and restart the backend."
-                )
+                raise EZVIZError(f"EZVIZ access token expired and could not be renewed ({exc}). {SETUP_HINT}")
             body = self._post(path, {"accessToken": token, **data}, timeout)
         return body
 
     def authenticate(self) -> str:
-        """Return a cached accessToken, refreshing it from EZVIZ when close to expiry."""
+        """Return a cached accessToken, refreshing it from EZVIZ when close to expiry or when the account changed."""
+        creds = self._creds()
+        if self._token and self._token_creds != creds:
+            self._token, self._token_expires_at = None, 0  # account changed in Settings
         if self._token and _now_ms() < self._token_expires_at - 60_000:
             return self._token
 
         try:
-            body = self._post("/api/lapp/token/get", {"appKey": self.app_key, "appSecret": self.app_secret})
-            data = body.get("data") or {}
-            if body.get("code") == "200" and data.get("accessToken"):
-                self._token = data["accessToken"]
-                self._token_expires_at = data.get("expireTime") or _now_ms() + 7 * 24 * 3600 * 1000
-                return self._token
-            raise EZVIZError(f"EZVIZ Auth failed: [{body.get('code')}] {body.get('msg') or 'Unknown error'}")
+            self._token, self._token_expires_at = request_token(*creds)
+            self._token_creds = creds
+            return self._token
         except Exception as exc:
             log.error("[EZVIZProvider] Error authenticating: %s", exc)
             if self._token:
@@ -141,23 +178,29 @@ class EZVIZProvider:
             log.warning("[EZVIZProvider] Could not load channels for %s: %s", device_serial, exc)
         return device
 
+    def get_all_channels(self) -> dict[str, list[DeviceChannelInfo]]:
+        """Every channel on the account, grouped by device serial (upper case). One API call."""
+        body = self._call("/api/lapp/camera/list", {"pageStart": 0, "pageSize": 50})
+        out: dict[str, list[DeviceChannelInfo]] = {}
+        if body.get("code") == "200" and isinstance(body.get("data"), list):
+            for c in body["data"]:
+                out.setdefault(str(c.get("deviceSerial", "")).upper(), []).append(
+                    DeviceChannelInfo(
+                        channel_no=c.get("channelNo"),
+                        channel_name=c.get("channelName") or f"Channel {c.get('channelNo')}",
+                        status=c.get("status"),
+                        is_encrypt=c.get("isEncrypt") if c.get("isEncrypt") is not None else 0,
+                        video_level=c.get("videoLevel"),
+                        pic_url=c.get("picUrl"),
+                    )
+                )
+        for chans in out.values():
+            chans.sort(key=lambda ch: ch.channel_no or 0)
+        return out
+
     def get_camera_channels(self, device_serial: str) -> list[DeviceChannelInfo]:
         """All channels for a device (e.g. 1 = wide lens, 2 = pan-tilt)."""
-        body = self._call("/api/lapp/camera/list", {})
-        if body.get("code") == "200" and isinstance(body.get("data"), list):
-            return [
-                DeviceChannelInfo(
-                    channel_no=c.get("channelNo"),
-                    channel_name=c.get("channelName") or f"Channel {c.get('channelNo')}",
-                    status=c.get("status"),
-                    is_encrypt=c.get("isEncrypt") if c.get("isEncrypt") is not None else 0,
-                    video_level=c.get("videoLevel"),
-                    pic_url=c.get("picUrl"),
-                )
-                for c in body["data"]
-                if str(c.get("deviceSerial", "")).upper() == device_serial.upper()
-            ]
-        return []
+        return self.get_all_channels().get(device_serial.upper(), [])
 
     def get_stream_url(self, device_serial: str, channel_no: int = 1, protocol: int = 2) -> StreamUrlResult:
         """Live stream address. protocol 2 = HLS (.m3u8), 1 = ezopen."""

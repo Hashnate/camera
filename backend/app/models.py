@@ -53,6 +53,7 @@ class UserRole(str, enum.Enum):
     HR_MANAGER = "HR_MANAGER"
     SUPERVISOR = "SUPERVISOR"
     VIEWER = "VIEWER"
+    EMPLOYEE = "EMPLOYEE"  # sees only their own records (User.employee_id)
 
 
 class CameraStatus(str, enum.Enum):
@@ -113,10 +114,23 @@ class User(_Timestamps, Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column("passwordHash", Text, nullable=False)
+    password_hash: Mapped[str] = mapped_column("passwordHash", Text, nullable=False, info={"private": True})
     full_name: Mapped[str] = mapped_column("fullName", Text, nullable=False)
     role: Mapped[UserRole] = mapped_column(_pg_enum(UserRole), default=UserRole.VIEWER, nullable=False)
     company_id: Mapped[Optional[str]] = mapped_column("companyId", Text, _fk("Company.id", "SET NULL"))
+    # Access control (see app/permissions.py)
+    is_active: Mapped[bool] = mapped_column("isActive", Boolean, default=True, server_default="true", nullable=False)
+    # The employee record this login belongs to ("My time"); required for the EMPLOYEE role.
+    employee_id: Mapped[Optional[str]] = mapped_column("employeeId", Text, _fk("Employee.id", "SET NULL"), unique=True)
+    # Set for new accounts and admin password resets: the user must choose their own password first.
+    must_change_password: Mapped[bool] = mapped_column(
+        "mustChangePassword", Boolean, default=False, server_default="false", nullable=False
+    )
+    # Bumped on password change / reset / disable: every older sign-in token stops working.
+    token_version: Mapped[int] = mapped_column("tokenVersion", Integer, default=0, server_default="0", nullable=False)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column("lastLoginAt", Timestamp)
+    failed_logins: Mapped[int] = mapped_column("failedLogins", Integer, default=0, server_default="0", nullable=False)
+    locked_until: Mapped[Optional[datetime]] = mapped_column("lockedUntil", Timestamp)
 
     company: Mapped[Optional["Company"]] = relationship(back_populates="users")
 
@@ -206,6 +220,19 @@ class Camera(_Timestamps, Base):
     )
     last_online_at: Mapped[Optional[datetime]] = mapped_column("lastOnlineAt", Timestamp)
     firmware_ver: Mapped[Optional[str]] = mapped_column("firmwareVer", Text)
+    # Switched off in Settings: kept (with its rooms and history) but not watched or shown as live.
+    is_enabled: Mapped[bool] = mapped_column("isEnabled", Boolean, default=True, server_default="true", nullable=False)
+    # How WorkSight reaches the camera: EZVIZ (cloud account) | RTSP (IP camera / recorder) | HTTP (snapshot or
+    # MJPEG link) | USB (camera plugged into the PC running the AI service). See app/services/camera_sources.py.
+    connection_type: Mapped[str] = mapped_column(
+        "connectionType", Text, default="EZVIZ", server_default="EZVIZ", nullable=False
+    )
+    brand: Mapped[Optional[str]] = mapped_column(Text)  # stream-address template, e.g. "hikvision"
+    host: Mapped[Optional[str]] = mapped_column(Text)
+    port: Mapped[Optional[int]] = mapped_column(Integer)
+    username: Mapped[Optional[str]] = mapped_column(Text)
+    # Encrypted (app.crypto.encrypt_text); `private` keeps it out of every API response.
+    password_enc: Mapped[Optional[str]] = mapped_column("passwordEnc", Text, info={"private": True})
 
     office: Mapped[Office] = relationship()
 
@@ -223,6 +250,28 @@ class CameraChannel(_Timestamps, Base):
     snapshot_url: Mapped[Optional[str]] = mapped_column("snapshotUrl", Text)
     is_encrypted: Mapped[bool] = mapped_column("isEncrypted", Boolean, default=False, nullable=False)
     status: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Whether the AI service runs face recognition on this lens.
+    recognition_enabled: Mapped[bool] = mapped_column(
+        "recognitionEnabled", Boolean, default=True, server_default="true", nullable=False
+    )
+    # Non-EZVIZ cameras: where this lens's video comes from, WITHOUT credentials (they are added at use time),
+    # e.g. rtsp://192.168.1.64:554/Streaming/Channels/101, http://cam/snapshot.jpg, or usb:0.
+    stream_url: Mapped[Optional[str]] = mapped_column("streamUrl", Text)
+
+
+class SystemSetting(Base):
+    """One section of the settings changed from the dashboard (Settings page), e.g. "recognition".
+
+    `value` holds only what was saved; anything missing falls back to the built-in default.
+    Secrets inside it are encrypted (see app.services.settings_store).
+    """
+
+    __tablename__ = "SystemSetting"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_by_id: Mapped[Optional[str]] = mapped_column("updatedById", Text, _fk("User.id", "SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column("updatedAt", Timestamp, default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class CameraEvent(Base):
@@ -401,6 +450,28 @@ class FaceTemplate(Base):
     enrolled_by_id: Mapped[Optional[str]] = mapped_column("enrolledById", Text, _fk("User.id", "SET NULL"))
     created_at: Mapped[datetime] = mapped_column("createdAt", Timestamp, default=utcnow, nullable=False)
     revoked_at: Mapped[Optional[datetime]] = mapped_column("revokedAt", Timestamp)
+
+    employee: Mapped[Employee] = relationship()
+
+
+class FaceEnrollmentSession(Base):
+    """One-time link that lets an employee self-enrol their face from their own phone (QR code).
+
+    Only a SHA-256 hash of the token is stored; the token itself is shown once, inside the QR code.
+    """
+
+    __tablename__ = "FaceEnrollmentSession"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
+    employee_id: Mapped[str] = mapped_column("employeeId", Text, _fk("Employee.id", "CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column("tokenHash", Text, unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(Text, default="PENDING", nullable=False)  # PENDING | OPENED | COMPLETED | CANCELLED
+    created_by_id: Mapped[Optional[str]] = mapped_column("createdById", Text, _fk("User.id", "SET NULL"))
+    expires_at: Mapped[datetime] = mapped_column("expiresAt", Timestamp, nullable=False)
+    opened_at: Mapped[Optional[datetime]] = mapped_column("openedAt", Timestamp)
+    completed_at: Mapped[Optional[datetime]] = mapped_column("completedAt", Timestamp)
+    angles_enrolled: Mapped[Optional[str]] = mapped_column("anglesEnrolled", Text)  # e.g. "front,left,right"
+    created_at: Mapped[datetime] = mapped_column("createdAt", Timestamp, default=utcnow, nullable=False)
 
     employee: Mapped[Employee] = relationship()
 

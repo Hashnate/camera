@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
 export function getStoredToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -34,11 +34,15 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
 
   const data = await res.json().catch(() => ({}));
 
-  if (res.status === 401 && typeof window !== 'undefined') {
+  if (res.status === 401 && typeof window !== 'undefined' && !endpoint.startsWith('/auth/login')) {
     setStoredToken(null);
     if (!window.location.pathname.startsWith('/login')) {
       window.location.href = '/login';
     }
+  }
+  // Signed in with a temporary password: everything else waits until a new one is chosen.
+  if (res.status === 403 && data?.code === 'PASSWORD_CHANGE_REQUIRED' && typeof window !== 'undefined') {
+    if (!window.location.pathname.startsWith('/change-password')) window.location.href = '/change-password';
   }
 
   if (!res.ok) {
@@ -51,7 +55,7 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
 export const api = {
   // Auth
   login: (email: string, password: string) =>
-    apiFetch<{ success: boolean; token: string; user: any }>('/auth/login', {
+    apiFetch<{ success: boolean; token: string; user: SessionUser }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }),
@@ -60,7 +64,7 @@ export const api = {
       method: 'POST',
     }),
   getMe: () =>
-    apiFetch<{ success: boolean; user: any }>('/auth/me'),
+    apiFetch<{ success: boolean; user: SessionUser }>('/auth/me'),
 
   // Cameras
   getCameras: () =>
@@ -173,7 +177,7 @@ export const api = {
       body: form,
     });
   },
-  enrollFace: (employeeId: string, image: Blob, source: 'UPLOAD' | 'WEBCAM', angle: string = 'front') => {
+  enrollFace: (employeeId: string, image: Blob, source: 'UPLOAD' | 'WEBCAM' | 'MOBILE', angle: string = 'front') => {
     const form = new FormData();
     form.append('image', image, `${angle}.jpg`);
     form.append('consent', 'true');
@@ -187,6 +191,32 @@ export const api = {
   revokeFace: (employeeId: string) =>
     apiFetch<{ success: boolean; message: string; deleted: number }>(`/faces/${employeeId}`, {
       method: 'DELETE',
+    }),
+
+  // Phone self-enrolment via one-time QR link
+  createMobileEnrollSession: (employeeId: string) =>
+    apiFetch<{ success: boolean; data: MobileEnrollSessionCreated }>(`/faces/${employeeId}/mobile-session`, {
+      method: 'POST',
+    }),
+  getMobileEnrollSession: (sessionId: string) =>
+    apiFetch<{ success: boolean; data: MobileEnrollSession }>(`/faces/mobile-sessions/${sessionId}`),
+  cancelMobileEnrollSession: (sessionId: string) =>
+    apiFetch<{ success: boolean; data: MobileEnrollSession }>(`/faces/mobile-sessions/${sessionId}`, {
+      method: 'DELETE',
+    }),
+  /** A photo the phone sent, waiting for HR to review (nothing is enrolled until HR saves). */
+  getMobileEnrollPhoto: async (sessionId: string, angle: string): Promise<Blob> => {
+    const res = await fetch(`${API_BASE}/faces/mobile-sessions/${sessionId}/photos/${angle}`, {
+      headers: { Authorization: `Bearer ${getStoredToken() ?? ''}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error(`Could not load the ${angle} photo from the phone`);
+    return res.blob();
+  },
+  /** After HR saved the phone photos: discard the server's temporary copies. */
+  completeMobileEnrollSession: (sessionId: string) =>
+    apiFetch<{ success: boolean; data: MobileEnrollSession }>(`/faces/mobile-sessions/${sessionId}/complete`, {
+      method: 'POST',
     }),
 
   // System A: Real-Time Presence
@@ -367,6 +397,29 @@ export interface FaceEnrollmentSummary {
   lastEnrolledAt: string;
 }
 
+/** SUBMITTED = the phone sent its photos; they are not enrolled until HR saves them (COMPLETED). */
+export type MobileEnrollStatus = 'PENDING' | 'OPENED' | 'SUBMITTED' | 'COMPLETED' | 'CANCELLED' | 'EXPIRED';
+
+export interface MobileEnrollSession {
+  sessionId: string;
+  employeeId: string;
+  status: MobileEnrollStatus;
+  expiresAt: string;
+  secondsRemaining: number;
+  openedAt: string | null;
+  completedAt: string | null;
+  /** Angles the phone sent (SUBMITTED) / that HR saved (COMPLETED). */
+  angles: string[];
+}
+
+export interface MobileEnrollSessionCreated extends MobileEnrollSession {
+  token: string;
+  /** Configured public URL (MOBILE_ENROLL_BASE_URL), e.g. an HTTPS domain or tunnel. */
+  publicBaseUrl: string | null;
+  /** This PC's Wi-Fi address, used when the dashboard is open on localhost. */
+  lanIp: string | null;
+}
+
 export interface RecognitionEvent {
   id: string;
   employeeId: string;
@@ -383,7 +436,7 @@ export interface RecognitionChannelStatus {
   cameraId: string;
   cameraName: string;
   channelNo: number;
-  source: 'hls' | 'snapshot' | 'webcam' | 'file' | 'folder' | null;
+  source: 'hls' | 'snapshot' | 'webcam' | 'file' | 'folder' | 'rtsp' | 'mjpeg' | 'http' | 'usb' | null;
   state: 'starting' | 'connecting' | 'running' | 'idle' | 'error';
   lastFrameAt: string | null;
   framesProcessed: number;
@@ -400,12 +453,201 @@ export interface RecognitionStatus {
   lastError?: string | null;
   sourceOverride?: boolean;
   channels?: RecognitionChannelStatus[];
+  /** Recognition settings the AI service is using right now, and where they came from. */
+  settings?: Record<string, number | string>;
+  settingsSource?: 'dashboard' | '.env';
+  settingsLoadedAt?: string | null;
 }
 
+// ---------------------------------------------------------------- settings
+
+export type SettingsSectionName = 'ezviz' | 'recognition' | 'attendance' | 'enrollment';
+
+export interface SettingsSection {
+  /** Effective values. Secrets come back empty, with `<key>Set` telling whether one is saved. */
+  values: Record<string, any>;
+  defaults: Record<string, any>;
+  /** Keys saved from the dashboard (the rest use their default). */
+  customised: string[];
+}
+
+export interface CameraLens {
+  id: string;
+  cameraId: string;
+  channelNo: number;
+  channelName: string;
+  status: number;
+  isEncrypted: boolean;
+  recognitionEnabled: boolean;
+  /** Non-EZVIZ cameras: where the video comes from, without the login. */
+  streamUrl: string | null;
+}
+
+/** EZVIZ cloud | RTSP (IP camera / recorder) | HTTP (snapshot, MJPEG or HLS link) | USB. */
+export type ConnectionType = 'EZVIZ' | 'RTSP' | 'HTTP' | 'USB';
+
+export interface CameraRecord {
+  id: string;
+  name: string;
+  model: string;
+  serialNumber: string;
+  provider: string;
+  location: string | null;
+  status: 'ONLINE' | 'OFFLINE' | 'ERROR' | 'MAINTENANCE';
+  lastOnlineAt: string | null;
+  firmwareVer: string | null;
+  isEnabled: boolean;
+  connectionType: ConnectionType;
+  brand: string | null;
+  host: string | null;
+  port: number | null;
+  username: string | null;
+  /** A camera password is saved (it is never sent to the browser). */
+  hasPassword: boolean;
+  channels: CameraLens[];
+}
+
+export interface CameraBrand {
+  id: string;
+  label: string;
+  port: number;
+  username: string;
+  multiChannel: boolean;
+  /** "Other brand": the RTSP address has to be typed in. */
+  needsUrl: boolean;
+  hint: string;
+}
+
+export interface NetworkCamera {
+  host: string;
+  port: number;
+  deviceUrl: string;
+  name: string | null;
+  hardware: string | null;
+  manufacturer: string | null;
+  isRecorder: boolean;
+  cameraId: string | null;
+  /** Name of an EZVIZ-cloud camera of the same model (probably this one, already added). */
+  sameModelAs: string | null;
+}
+
+export interface OnvifStreams {
+  device: { Manufacturer: string | null; Model: string | null; FirmwareVersion: string | null; SerialNumber: string | null };
+  lenses: { channelNo: number; channelName: string; streamUrl: string; width: number; height: number; encoding: string | null }[];
+}
+
+export interface CameraTestResult {
+  ok: boolean;
+  message: string;
+  width?: number;
+  height?: number;
+  /** data: URL of the picture. */
+  image?: string;
+  streamUrl?: string;
+}
+
+/** Details for testing or adding a non-EZVIZ camera. */
+export interface CameraConnection {
+  connectionType: ConnectionType;
+  brand?: string;
+  host?: string;
+  port?: number | null;
+  username?: string;
+  password?: string;
+  streamUrl?: string;
+  channelNo?: number;
+  channelCount?: number;
+  channels?: { channelNo?: number; channelName?: string; streamUrl: string }[];
+  cameraId?: string;
+}
+
+export interface DiscoveredCamera {
+  serialNumber: string;
+  name: string;
+  model: string | null;
+  firmware: string | null;
+  online: boolean;
+  channels: { channelNo: number; channelName: string; online: boolean }[];
+  /** Set when this camera is already added to WorkSight. */
+  cameraId: string | null;
+}
+
+export interface CameraChanges {
+  name?: string;
+  location?: string | null;
+  isEnabled?: boolean;
+  channels?: { channelNo: number; channelName?: string; recognitionEnabled?: boolean; streamUrl?: string }[];
+  // Non-EZVIZ cameras
+  host?: string;
+  port?: number | null;
+  username?: string | null;
+  password?: string;
+  passwordClear?: boolean;
+  addChannels?: { channelNo?: number; channelName?: string; streamUrl?: string }[];
+  removeChannels?: number[];
+}
+
+export const settingsApi = {
+  all: () =>
+    apiFetch<{ success: boolean; canEdit: boolean; data: Record<SettingsSectionName, SettingsSection> }>('/settings'),
+  save: (section: SettingsSectionName, changes: Record<string, any>) =>
+    apiFetch<{ success: boolean; data: SettingsSection }>(`/settings/${section}`, {
+      method: 'PUT',
+      body: JSON.stringify(changes),
+    }),
+  testEzviz: (account: { appKey?: string; appSecret?: string; apiBaseUrl?: string }) =>
+    apiFetch<{ success: boolean; data: { ok: boolean; message: string; deviceCount?: number | null } }>('/settings/ezviz/test', {
+      method: 'POST',
+      body: JSON.stringify(account),
+    }),
+
+  cameras: () => apiFetch<{ success: boolean; count: number; data: CameraRecord[] }>('/cameras'),
+  discoverCameras: () => apiFetch<{ success: boolean; count: number; data: DiscoveredCamera[] }>('/cameras/discover'),
+  addCamera: (body: Record<string, any>) =>
+    apiFetch<{ success: boolean; data: CameraRecord }>('/cameras', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  brands: () => apiFetch<{ success: boolean; data: CameraBrand[] }>('/cameras/brands'),
+  scanNetwork: () => apiFetch<{ success: boolean; count: number; data: NetworkCamera[] }>('/cameras/scan'),
+  onvifStreams: (body: { host: string; port?: number; username: string; password: string; deviceUrl?: string }) =>
+    apiFetch<{ success: boolean; data: OnvifStreams }>('/cameras/onvif', { method: 'POST', body: JSON.stringify(body) }),
+  testCamera: (body: CameraConnection) =>
+    apiFetch<{ success: boolean; data: CameraTestResult }>('/cameras/test', { method: 'POST', body: JSON.stringify(body) }),
+  /** Current picture of a lens (works for every camera type). */
+  cameraPreview: async (cameraId: string, channel: number): Promise<Blob> => {
+    const token = getStoredToken();
+    const res = await fetch(`${API_BASE}/cameras/${cameraId}/preview?channel=${channel}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.message || `HTTP error ${res.status}`);
+    }
+    return res.blob();
+  },
+  updateCamera: (id: string, changes: CameraChanges) =>
+    apiFetch<{ success: boolean; data: CameraRecord }>(`/cameras/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(changes),
+    }),
+  removeCamera: (id: string) => apiFetch<{ success: boolean }>(`/cameras/${id}`, { method: 'DELETE' }),
+  refreshCameras: () => apiFetch<{ success: boolean; message: string }>('/cameras/sync-ezviz', { method: 'POST' }),
+};
+
+/** A stretch of continuous camera sightings (start/end are the first/last sighting). */
 export interface WorkSession {
   start: string;
   end: string;
-  minutes: number;
+  seconds: number;
+}
+
+/** Not seen for longer than the away threshold: last sighting before -> first sighting after. */
+export interface AwayPeriod {
+  start: string;
+  end: string;
+  seconds: number;
 }
 
 export interface WorkDayRow {
@@ -415,12 +657,29 @@ export interface WorkDayRow {
   date: string | null;
   measured: boolean;
   checkIn: string | null;
+  firstSeen: string | null;
   lastSeen: string | null;
   insideMinutes: number;
+  insideSeconds: number;
   spanMinutes: number;
   awayMinutes: number;
+  awaySeconds: number;
+  sightings: number;
   isLate: boolean;
   sessions: WorkSession[];
+  awayPeriods: AwayPeriod[];
+}
+
+export interface WorkPeriodDay {
+  date: string;
+  present: boolean;
+  isLate: boolean;
+  firstSeen: string | null;
+  lastSeen: string | null;
+  insideMinutes: number;
+  awayMinutes: number;
+  timesAway: number;
+  spanMinutes: number;
 }
 
 export interface WorkPeriodRow {
@@ -428,32 +687,58 @@ export interface WorkPeriodRow {
   daysPresent: number;
   lateDays: number;
   totalInsideMinutes: number;
+  totalAwayMinutes: number;
   totalSpanMinutes: number;
   avgInsideMinutes: number;
   scheduledMinutesPerDay: number | null;
   measuredDays: number;
-  days: { date: string; insideMinutes: number; spanMinutes: number }[];
+  days: WorkPeriodDay[];
 }
 
+export interface Sighting {
+  seenAt: string;
+  action: 'CHECK_IN' | 'CHECK_OUT' | 'SEEN';
+  similarity: number;
+  channelNo: number;
+  cameraName: string | null;
+}
+
+export interface WorkHoursSettings {
+  presenceGapMin: number;
+  defaultPresenceGapMin: number;
+  sightingCreditMin: number;
+  recognitionDedupSec: number;
+}
+
+const gapQs = (gapMin?: number) => (gapMin ? `gapMin=${gapMin}` : '');
+
 export const workHoursApi = {
-  daily: (date?: string) =>
-    apiFetch<{
+  daily: (date?: string, gapMin?: number) => {
+    const qs = [date ? `date=${date}` : '', gapQs(gapMin)].filter(Boolean).join('&');
+    return apiFetch<{
       success: boolean;
       date: string;
+      today: string;
       isToday: boolean;
-      settings: { presenceGapMin: number; sightingCreditMin: number };
+      settings: WorkHoursSettings;
       summary: { employees: number; present: number; inOfficeNow: number | null; totalInsideMinutes: number; avgInsideMinutes: number };
       data: WorkDayRow[];
-    }>(`/work-hours/daily${date ? `?date=${date}` : ''}`),
-  summary: (startDate: string, endDate: string) =>
+    }>(`/work-hours/daily${qs ? `?${qs}` : ''}`);
+  },
+  summary: (startDate: string, endDate: string, gapMin?: number) =>
     apiFetch<{
       success: boolean;
       startDate: string;
       endDate: string;
+      today: string;
       dates: string[];
-      settings: { presenceGapMin: number };
+      settings: WorkHoursSettings;
       data: WorkPeriodRow[];
-    }>(`/work-hours/summary?startDate=${startDate}&endDate=${endDate}`),
+    }>(`/work-hours/summary?startDate=${startDate}&endDate=${endDate}${gapMin ? `&${gapQs(gapMin)}` : ''}`),
+  sightings: (employeeId: string, date?: string) =>
+    apiFetch<{ success: boolean; date: string; count: number; data: Sighting[] }>(
+      `/work-hours/${employeeId}/sightings${date ? `?date=${date}` : ''}`
+    ),
 };
 
 // ------------------------------------------------------------- WorkSight v2.3 Daily Tracking Types & API
@@ -864,4 +1149,113 @@ export const breaksApi = {
       `/breaks/reconciliation${qs ? `?${qs}` : ''}`
     );
   },
+};
+
+// ---------------------------------------------------------------- accounts and access levels
+
+/** What a signed-in person may do (decided by the server from their role). */
+export type Permission = 'self.view' | 'reports.view' | 'cameras.live' | 'people.manage' | 'setup.manage' | 'users.manage';
+
+export interface SessionUser {
+  id: string;
+  email: string;
+  fullName: string;
+  role: string;
+  roleLabel: string;
+  permissions: Permission[];
+  mustChangePassword: boolean;
+  /** The employee record this login belongs to ("My time"). */
+  employee: { id: string; fullName: string; employeeCode: string } | null;
+  company: { id: string; name: string } | null;
+}
+
+export const authApi = {
+  changePassword: (currentPassword: string, newPassword: string) =>
+    apiFetch<{ success: boolean; token: string; user: SessionUser }>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+};
+
+export interface UserAccount {
+  id: string;
+  email: string;
+  fullName: string;
+  role: string;
+  roleLabel: string;
+  isActive: boolean;
+  isLocked: boolean;
+  mustChangePassword: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
+  employee: { id: string; fullName: string; employeeCode: string } | null;
+  isYou: boolean;
+  /** False for a Super admin's account when you are not a Super admin. */
+  canEdit: boolean;
+}
+
+export interface RoleInfo {
+  value: string;
+  label: string;
+  description: string;
+  permissions: Permission[];
+  /** Whether you may give this access level. */
+  assignable: boolean;
+}
+
+export interface AccountActivity {
+  id: string;
+  at: string;
+  action: string;
+  text: string;
+  actor: string | null;
+  target: string | null;
+  changes: Record<string, [any, any]> | null;
+}
+
+export interface NewUser {
+  fullName: string;
+  email: string;
+  role: string;
+  employeeId?: string | null;
+  password?: string;
+}
+
+export const usersApi = {
+  list: () => apiFetch<{ success: boolean; count: number; data: UserAccount[] }>('/users'),
+  roles: () => apiFetch<{ success: boolean; data: RoleInfo[] }>('/users/roles'),
+  activity: (limit = 30) => apiFetch<{ success: boolean; data: AccountActivity[] }>(`/users/activity?limit=${limit}`),
+  create: (body: NewUser) =>
+    apiFetch<{ success: boolean; data: UserAccount; temporaryPassword: string }>('/users', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id: string, body: Partial<NewUser> & { isActive?: boolean; unlock?: boolean }) =>
+    apiFetch<{ success: boolean; data: UserAccount }>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  resetPassword: (id: string) =>
+    apiFetch<{ success: boolean; data: UserAccount; temporaryPassword: string }>(`/users/${id}/reset-password`, { method: 'POST' }),
+  remove: (id: string) => apiFetch<{ success: boolean }>(`/users/${id}`, { method: 'DELETE' }),
+};
+
+export interface MyDay {
+  date: string;
+  present: boolean;
+  isLate: boolean;
+  insideMinutes: number;
+  awayMinutes: number;
+  timesAway: number;
+  firstSeen: string | null;
+  lastSeen: string | null;
+}
+
+export interface MyOfficeTime {
+  date: string;
+  today: string;
+  isToday: boolean;
+  awayAfterMin: number;
+  day: WorkDayRow;
+  history: MyDay[];
+  summary: { days: number; daysPresent: number; lateDays: number; totalInsideMinutes: number; avgInsideMinutes: number };
+}
+
+export const meApi = {
+  officeTime: (date?: string, days = 14) =>
+    apiFetch<{ success: boolean } & MyOfficeTime>(`/me/office-time?days=${days}${date ? `&date=${date}` : ''}`),
 };

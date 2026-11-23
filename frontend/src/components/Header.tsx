@@ -1,45 +1,66 @@
 'use client';
 
 import React from 'react';
-import { Bell, Wifi, Camera } from 'lucide-react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { Menu } from 'lucide-react';
+import { navItemFor } from '@/lib/nav';
+import { useShell } from '@/components/shell/ShellContext';
+import { HealthDot, healthLabel } from '@/components/ui';
 
 interface HeaderProps {
+  /** Defaults to the page's name in the navigation. */
   title?: string;
+  /** Defaults to the page's description in the navigation. */
   subtitle?: string;
+  /** Buttons shown on the right (e.g. "Add employee"). */
+  actions?: React.ReactNode;
 }
 
-export function Header({ title = 'Workplace Overview', subtitle = 'Real-time office presence and camera operations' }: HeaderProps) {
+export function Header({ title, subtitle, actions }: HeaderProps) {
+  const pathname = usePathname();
+  const { health, setMobileNavOpen, can } = useShell();
+  const item = navItemFor(pathname);
+
+  const healthTone =
+    health === 'live'
+      ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/15'
+      : health === 'offline'
+      ? 'bg-rose-50 text-rose-700 ring-rose-600/15'
+      : health === 'degraded'
+      ? 'bg-amber-50 text-amber-800 ring-amber-600/20'
+      : 'bg-slate-100 text-slate-600 ring-slate-500/10';
+
   return (
-    <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between sticky top-0 z-10">
-      <div>
-        <h1 className="text-lg font-bold text-slate-900 tracking-tight">{title}</h1>
-        <p className="text-xs text-slate-500">{subtitle}</p>
-      </div>
+    <header className="sticky top-0 z-30 bg-[#f6f7f9]/85 backdrop-blur-md border-b border-slate-200/70">
+      <div className="h-16 px-4 sm:px-6 lg:px-8 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setMobileNavOpen(true)}
+          className="lg:hidden -ml-1 p-2 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-200/60"
+          aria-label="Open menu"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
 
-      <div className="flex items-center gap-4">
-        {/* Real-time Camera Health Badge */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-700">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          <span className="flex items-center gap-1">
-            <Wifi className="w-3.5 h-3.5" /> EZVIZ H7c Live
-          </span>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[17px] font-semibold tracking-tight text-slate-900 truncate">{title ?? item?.name ?? 'WorkSight'}</h1>
+          <p className="hidden sm:block text-[12.5px] text-slate-500 truncate">{subtitle ?? item?.description ?? ''}</p>
         </div>
 
-        {/* User Badge */}
-        <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
-          <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center text-slate-700 font-semibold text-xs">
-            AD
-          </div>
-          <div className="hidden md:block text-left">
-            <p className="text-xs font-semibold text-slate-900 leading-none">Admin</p>
-            <p className="text-[11px] text-slate-500 mt-0.5">Super Administrator</p>
-          </div>
-        </div>
+        {actions && <div className="hidden md:flex items-center gap-2">{actions}</div>}
+
+        {can('reports.view') && (
+          <Link
+            href={can('cameras.live') ? '/dashboard/cameras' : '/dashboard'}
+            title="Camera and face-recognition status"
+            className={`inline-flex items-center gap-2 h-8 px-3 rounded-full text-xs font-medium ring-1 ring-inset transition-colors hover:brightness-[0.98] ${healthTone}`}
+          >
+            <HealthDot health={health} />
+            <span className="hidden sm:inline">{healthLabel(health)}</span>
+          </Link>
+        )}
       </div>
     </header>
   );
 }
-

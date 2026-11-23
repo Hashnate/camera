@@ -196,10 +196,7 @@ export default function EmployeeDailyTrackingHistoryPage() {
 
   return (
     <>
-      <Header
-        title="Employee Daily Tracking History"
-        subtitle="Individual timeline, non-overlapping zone intervals, break auditing, and biometric identity history"
-      />
+      <Header title="Work Hours history" subtitle="One employee’s rooms and breaks, day by day" />
 
       <main className="p-8 space-y-8 max-w-7xl mx-auto">
         {/* Navigation & Controls */}

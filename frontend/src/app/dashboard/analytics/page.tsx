@@ -28,10 +28,7 @@ export default function AnalyticsPage() {
 
   return (
     <>
-      <Header
-        title="Workplace Occupancy & Space Analytics"
-        subtitle="AI-driven anonymous zone presence, capacity thresholds, and spatial utilization"
-      />
+      <Header />
 
       <main className="p-8 space-y-6">
         <div className="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm space-y-2">

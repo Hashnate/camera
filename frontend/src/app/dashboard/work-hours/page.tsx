@@ -243,10 +243,7 @@ export default function WorkHoursDailyTrackingPage() {
 
   return (
     <>
-      <Header
-        title="Daily Employee Tracking & Working-Hour Calculation"
-        subtitle="Real-time multi-zone duration tracking, movement auditing, and verified hybrid attendance"
-      />
+      <Header />
 
       <main className="p-8 space-y-8 max-w-7xl mx-auto">
         {/* Top Control Bar: Date Selector & Actions */}
