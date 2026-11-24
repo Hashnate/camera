@@ -13,6 +13,7 @@ from camera_io import PreviewPool, SourceError, grab_once, mask, to_jpeg
 from config import settings
 from face_engine import FaceEngine, FaceEngineError, decode_image
 from worker import RecognitionManager
+import scan as scan_mod
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("ai")
@@ -131,6 +132,39 @@ def preview(camera_id: str, channel_no: int):
     if frame is None:
         raise HTTPException(status_code=404, detail="Not watching this lens")
     return _jpeg_response(frame)
+
+
+# ---------------------------------------------------------------- enrol from the office camera (live scanning)
+
+
+@app.get("/scan/{camera_id}/{channel_no}", dependencies=[Depends(require_service_key)])
+def scan(camera_id: str, channel_no: int):
+    """Latest frame of a watched lens with every face's full-view verdict (see scan.py)."""
+    frame = manager.latest_frame(camera_id, channel_no) if manager else None
+    if frame is None:
+        raise HTTPException(status_code=404, detail="This lens isn't being watched right now, or has no recent picture.")
+    return scan_mod.scan_lens(engine, manager.gallery, camera_id, channel_no, frame)
+
+
+class ScanCaptureRequest(BaseModel):
+    cameraId: str
+    channelNo: int
+    scanId: str
+    faceIndex: int
+
+
+@app.post("/scan/capture", dependencies=[Depends(require_service_key)])
+def scan_capture(req: ScanCaptureRequest):
+    """Embedding + review crop of one face from a recent scan. Only full views are accepted."""
+    if not manager:
+        raise HTTPException(status_code=503, detail="Recognition is not running")
+    try:
+        res = scan_mod.capture(manager.gallery, req.cameraId, req.channelNo, req.scanId, req.faceIndex)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if res is None:
+        raise HTTPException(status_code=410, detail="That picture has expired; the scan moved on.")
+    return res
 
 
 # ---------------------------------------------------------------- occupancy (unchanged stub)

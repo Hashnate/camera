@@ -16,16 +16,22 @@ their check-in -> check-out span with measured=False.
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, literal, select, text
 from sqlalchemy.orm import Session
 
 from app.services import settings_store
 from app.database import today_utc, utcnow
-from app.models import AttendanceRecord, Employee, RecognitionEvent, WorkSchedule
+from app.models import AttendanceRecord, Employee, PersonTrackSession, RecognitionEvent, TrackObservation, WorkSchedule
 from app.serialize import value
+
+# Body tracking: while a recognised person is followed as a body (face turned away, moved seats), the track
+# counts as seen. It is sampled at this interval, well under the smallest "away after" gap (1 min).
+TRACK_SAMPLE_SEC = 30
+# A body track whose face evidence broke (persistent conflicting faces) is not trusted.
+UNTRUSTED_TRACK_STATES = ("REQUIRES_REVERIFICATION",)
 
 
 @dataclass
@@ -111,11 +117,37 @@ def load_presence(
         )
         for rec_id, seen_at in rows:
             times[rec_id].append(seen_at)
+        face_counts = {rec_id: len(ts) for rec_id, ts in times.items()}
+
+        # Named body tracks fill in the time between face sightings. Uses the track's actual position samples
+        # (one every few seconds), one point per TRACK_SAMPLE_SEC bucket, so only time the body was really
+        # observed counts: never a stretch between a track's start and end that it wasn't seen.
+        rec_by_key = {(d.record.employee_id, d.record.date): rid for rid, d in by_record.items()}
+        range_start = datetime.fromisoformat(start_date)
+        range_end = datetime.fromisoformat(end_date) + timedelta(days=1)
+        bucket = func.date_bin(text(f"interval '{TRACK_SAMPLE_SEC} seconds'"), TrackObservation.observed_at, literal(datetime(2000, 1, 1)))
+        track_rows = db.execute(
+            select(PersonTrackSession.employee_id, func.max(TrackObservation.observed_at))
+            .join(PersonTrackSession, PersonTrackSession.id == TrackObservation.track_session_id)
+            .where(
+                PersonTrackSession.employee_id.in_({emp for emp, _ in rec_by_key}),
+                PersonTrackSession.identity_state.not_in(UNTRUSTED_TRACK_STATES),
+                TrackObservation.observed_at >= range_start,
+                TrackObservation.observed_at < range_end,
+            )
+            .group_by(PersonTrackSession.employee_id, bucket)
+        )
+        for emp_id, t in track_rows:
+            rec_id = rec_by_key.get((emp_id, t.date().isoformat()))  # same day key as record_date()
+            if rec_id and rec_id in face_counts:
+                times[rec_id].append(t)
+
         for rec_id, ts in times.items():
+            ts.sort()
             day = by_record[rec_id]
             day.sessions = _sessions(ts, gap_min)
             day.last_seen = ts[-1]
-            day.sightings = len(ts)
+            day.sightings = face_counts.get(rec_id, 0)
 
     today, now = today_utc(), utcnow()
     for day in by_record.values():
@@ -142,8 +174,31 @@ def current_state(day: Optional[DayPresence], is_today: bool, gap_min: Optional[
     return "LEFT" if day.record.check_out else "IN_OFFICE"
 
 
-def day_json(emp: Employee, day: Optional[DayPresence], is_today: bool, gap_min: Optional[int] = None) -> dict:
+def _local_to_utc(date_str: str, hhmm: str) -> datetime:
+    """'2026-11-23' + '09:00' in the server's timezone (the office's) -> naive UTC."""
+    local = datetime.fromisoformat(f"{date_str}T{hhmm}").astimezone()  # naive -> server local time
+    return local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def schedule_json(schedule: Optional[WorkSchedule], date_str: Optional[str]) -> Optional[dict]:
+    """The employee's working hours on that date, as instants the browser can place on a timeline."""
+    if not schedule or not date_str:
+        return None
+    return {
+        "name": schedule.name,
+        "start": schedule.start_time,
+        "end": schedule.end_time,
+        "graceMinutes": schedule.grace_minutes,
+        "startAt": value(_local_to_utc(date_str, schedule.start_time)),
+        "endAt": value(_local_to_utc(date_str, schedule.end_time)),
+    }
+
+
+def day_json(
+    emp: Employee, day: Optional[DayPresence], is_today: bool, gap_min: Optional[int] = None, date: Optional[str] = None
+) -> dict:
     sched = scheduled_minutes(emp.work_schedule)
+    on_date = day.record.date if day else date
     base = {
         "employee": {
             "id": emp.id,
@@ -153,13 +208,20 @@ def day_json(emp: Employee, day: Optional[DayPresence], is_today: bool, gap_min:
             "department": emp.department.name if emp.department else None,
         },
         "scheduledMinutes": sched,
+        "schedule": schedule_json(emp.work_schedule, on_date),
         "state": current_state(day, is_today, gap_min),
     }
     if day is None:
         return {**base, "date": None, "measured": False, "checkIn": None, "firstSeen": None, "lastSeen": None,
                 "insideMinutes": 0, "insideSeconds": 0, "spanMinutes": 0, "awayMinutes": 0, "awaySeconds": 0,
-                "sightings": 0, "sessions": [], "awayPeriods": [], "isLate": False}
+                "sightings": 0, "sessions": [], "awayPeriods": [], "isLate": False, "lateByMinutes": 0,
+                "longestAwaySeconds": 0}
     away = day.away_seconds()
+    late_by = 0
+    if day.record.is_late and day.record.check_in and emp.work_schedule:
+        start_utc = _local_to_utc(day.record.date, emp.work_schedule.start_time)
+        late_by = max(0, round((day.record.check_in - start_utc).total_seconds() / 60))
+    periods = day.away_periods()
     return {
         **base,
         "date": day.record.date,
@@ -174,10 +236,12 @@ def day_json(emp: Employee, day: Optional[DayPresence], is_today: bool, gap_min:
         "awaySeconds": away,
         "sightings": day.sightings,
         "isLate": day.record.is_late,
+        "lateByMinutes": late_by,
+        "longestAwaySeconds": round(max(((b - a).total_seconds() for a, b in periods), default=0)),
         "sessions": [
             {"start": value(s), "end": value(e), "seconds": round((e - s).total_seconds())} for s, e in day.sessions
         ],
         "awayPeriods": [
-            {"start": value(a), "end": value(b), "seconds": round((b - a).total_seconds())} for a, b in day.away_periods()
+            {"start": value(a), "end": value(b), "seconds": round((b - a).total_seconds())} for a, b in periods
         ],
     }

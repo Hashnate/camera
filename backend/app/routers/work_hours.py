@@ -51,7 +51,7 @@ def daily(date: Optional[str] = None, gapMin: Optional[int] = GapParam, db: Sess
     day = (_parse(date, "date") if date else _parse(today_utc(), "date")).isoformat()
     presence = load_presence(db, day, day, gapMin)
     is_today = day == today_utc()
-    rows = [day_json(emp, (presence.get(emp.id) or [None])[0], is_today, gapMin) for emp in _active_employees(db)]
+    rows = [day_json(emp, (presence.get(emp.id) or [None])[0], is_today, gapMin, day) for emp in _active_employees(db)]
     inside = [r["insideMinutes"] for r in rows if r["date"]]
     return {
         "success": True,

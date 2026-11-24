@@ -27,7 +27,9 @@ router = APIRouter(prefix="/api/tracking", tags=["tracking"])
 
 # In-memory synchronized frame cache: (camera_id, channel_no) -> frame_payload
 LATEST_FRAME_CACHE: Dict[tuple, Dict[str, Any]] = {}
-LAST_OBS_SAMPLE_TIME: Dict[int, float] = {}  # track_id -> last_sampled_monotonic
+LAST_OBS_SAMPLE_TIME: Dict[tuple, float] = {}  # (camera, channel, track_id) -> last sample time
+# An open track session not updated for this long is from an earlier AI-service run (track numbers restart).
+STALE_TRACK_AFTER = timedelta(seconds=60)
 BIOMETRIC_DIAGNOSTICS_BUFFER: deque = deque(maxlen=200)
 
 
@@ -385,6 +387,11 @@ def ingest_tracking_frame(body: dict = Depends(json_body), db: Session = Depends
                 PersonTrackSession.ended_at.is_(None),
             )
         )
+        # Track numbers restart when the AI service restarts. An open session that hasn't been updated for a while
+        # belongs to an earlier run: close it at its last sighting instead of gluing this new track onto it.
+        if session and now - session.last_seen_at > STALE_TRACK_AFTER:
+            session.ended_at = session.last_seen_at
+            session = None
         if not session:
             session = PersonTrackSession(
                 camera_id=camera_id,
@@ -412,9 +419,10 @@ def ingest_tracking_frame(body: dict = Depends(json_body), db: Session = Depends
             session.tracking_without_face_sec = twf_sec
 
         # Throttle DB TrackObservation samples (once every 3 seconds per track)
-        last_s = LAST_OBS_SAMPLE_TIME.get(tid, 0.0)
+        sample_key = (camera_id, channel_no, tid)  # track numbers repeat across lenses
+        last_s = LAST_OBS_SAMPLE_TIME.get(sample_key, 0.0)
         if now_wall - last_s >= 3.0:
-            LAST_OBS_SAMPLE_TIME[tid] = now_wall
+            LAST_OBS_SAMPLE_TIME[sample_key] = now_wall
             obs = TrackObservation(
                 track_session_id=session.id,
                 observed_at=now,

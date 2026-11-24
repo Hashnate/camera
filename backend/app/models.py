@@ -677,7 +677,7 @@ class TrackObservation(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
     track_session_id: Mapped[str] = mapped_column("trackSessionId", Text, _fk("PersonTrackSession.id", "CASCADE"), nullable=False, index=True)
-    observed_at: Mapped[datetime] = mapped_column("observedAt", Timestamp, default=utcnow, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column("observedAt", Timestamp, default=utcnow, nullable=False, index=True)
     bounding_box: Mapped[list] = mapped_column("boundingBox", JSON, nullable=False)  # [x, y, w, h] normalized
     zone_id: Mapped[Optional[str]] = mapped_column("zoneId", Text)
     detection_score: Mapped[float] = mapped_column("detectionScore", Double, default=0.0, nullable=False)

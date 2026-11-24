@@ -11,6 +11,10 @@ from typing import Optional
 import numpy as np
 try:
     from ultralytics import YOLO
+    import torch
+
+    # One lens per worker thread runs YOLO in parallel; one CPU thread each avoids them fighting over cores.
+    torch.set_num_threads(1)
 except ImportError:
     YOLO = None
 

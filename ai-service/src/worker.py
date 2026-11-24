@@ -22,6 +22,7 @@ from face_engine import FaceEngine, Gallery
 from camera_io import mask, open_spec
 from sources import FrameSource, HLSSource, SnapshotSource, open_override_source
 from yolo_detector import YOLOPersonDetector
+from camera_motion import CameraMotionEstimator
 from tracking_engine import ZoneTrackingEngine
 
 log = logging.getLogger("ai.worker")
@@ -94,13 +95,17 @@ class ChannelWorker(threading.Thread):
         self.last_frame = None
         self.last_frame_at = 0.0
 
-        if channel_no == 1:
-            try:
-                self.yolo_detector = YOLOPersonDetector(conf_threshold=0.30, iou_threshold=0.45)
-                self.tracking_engine = ZoneTrackingEngine(width=1920, height=1080)
-                self._sync_zones()
-            except Exception as e:
-                log.warning("[%s] Could not initialize YOLO person tracking: %s", self.name, e)
+        # Body tracking on every lens: a recognised person keeps their identity while the face is turned away
+        # or they move seats, and the backend counts that tracked time as "inside".
+        self.camera_motion = CameraMotionEstimator()  # pan / tilt lenses move on their own (auto-tracking)
+        try:
+            # Weak detections (0.15-0.30: people half hidden behind a monitor) reach the tracker, which only uses them
+            # to keep existing tracks alive; new tracks still need a confident (>= 0.30) detection.
+            self.yolo_detector = YOLOPersonDetector(conf_threshold=0.15, iou_threshold=0.45)
+            self.tracking_engine = ZoneTrackingEngine(width=1920, height=1080)
+            self._sync_zones()
+        except Exception as e:
+            log.warning("[%s] Could not initialize YOLO person tracking: %s", self.name, e)
 
         self.state = {
             "cameraId": camera["id"],
@@ -229,57 +234,48 @@ class ChannelWorker(threading.Thread):
         self.state["framesProcessed"] += 1
         self.state["lastFrameAt"] = _iso(now)
 
-        # 1. Face recognition analysis
-        # On Channel 1, run face detection every 4 frames to keep processing FPS at 8-12+ FPS.
-        # On Channel 2 (pan-tilt zoom lens), run face detection on every frame.
+        # 1. Face recognition analysis (every frame on every lens, so body tracks get named quickly)
         face_matches = []
-        run_face_rec = (self.channel_no != 1) or (self.frame_id % 4 == 0)
-        if run_face_rec:
-            faces = self.m.engine.analyze(frame)
-            self.state["facesDetected"] += len(faces)
-            for face in faces:
-                if not face.is_valid or face.embedding is None:
-                    continue  # Skip degraded/rejected face crop from identity assignment
+        pending_matches = []  # (face_id, employee_id, similarity): reported after the body-tracking check below
+        blocked_faces: set = set()  # faces on a body already locked to a different employee
+        faces = self.m.engine.analyze(frame)
+        self.state["facesDetected"] += len(faces)
+        for face in faces:
+            if not face.is_valid or face.embedding is None:
+                continue  # Skip degraded/rejected face crop from identity assignment
 
-                # Small (distant / partial) faces need a stronger match: they caused false identifications.
-                eye_px = _eye_distance(face)
-                threshold = cfg["matchThreshold"]
-                if eye_px is not None and eye_px < cfg["smallFaceEyePx"]:
-                    threshold = max(threshold, cfg["smallFaceMatchThreshold"])
-                match_res = self.m.gallery.match_diagnostic(
-                    face.embedding, threshold=threshold, margin=cfg["matchMargin"]
-                )
+            # Small (distant / partial) faces need a stronger match: they caused false identifications.
+            eye_px = _eye_distance(face)
+            threshold = cfg["matchThreshold"]
+            if eye_px is not None and eye_px < cfg["smallFaceEyePx"]:
+                threshold = max(threshold, cfg["smallFaceMatchThreshold"])
+            match_res = self.m.gallery.match_diagnostic(
+                face.embedding, threshold=threshold, margin=cfg["matchMargin"]
+            )
 
-                face_matches.append((
-                    face.box,
-                    match_res.employee_id,
-                    match_res.employee_name or "",
-                    match_res.similarity,
-                    face.face_id,
-                    {
-                        "qualityScore": face.quality_score,
-                        "sharpness": face.sharpness,
-                        "brightness": face.brightness,
-                        "isAmbiguous": match_res.is_ambiguous,
-                        "margin": match_res.margin,
-                        "runnerUpSimilarity": match_res.runner_up_similarity,
-                        "rejectionReason": match_res.rejection_reason,
-                        "eyeDistancePx": round(eye_px, 1) if eye_px is not None else None,
-                        "thresholdUsed": threshold,
-                    }
-                ))
+            face_matches.append((
+                face.box,
+                match_res.employee_id,
+                match_res.employee_name or "",
+                match_res.similarity,
+                face.face_id,
+                {
+                    "qualityScore": face.quality_score,
+                    "sharpness": face.sharpness,
+                    "brightness": face.brightness,
+                    "isAmbiguous": match_res.is_ambiguous,
+                    "margin": match_res.margin,
+                    "runnerUpSimilarity": match_res.runner_up_similarity,
+                    "rejectionReason": match_res.rejection_reason,
+                    "eyeDistancePx": round(eye_px, 1) if eye_px is not None else None,
+                    "thresholdUsed": threshold,
+                }
+            ))
 
-                if match_res.is_match and match_res.employee_id:
-                    hits = self.matches[match_res.employee_id]
-                    hits.append((now, match_res.similarity))
-                    while hits and now - hits[0][0] > cfg["confirmWindowSec"]:
-                        hits.popleft()
-                    if len(hits) >= cfg["confirmFrames"]:
-                        best = max(s for _, s in hits)
-                        hits.clear()
-                        self.m.report(match_res.employee_id, best, self.camera["id"], self.channel_no, now)
+            if match_res.is_match and match_res.employee_id:
+                pending_matches.append((face.face_id, match_res.employee_id, match_res.similarity))
 
-        # 2. Multi-person tracking & doorway crossing (Channel 1)
+        # 2. Multi-person tracking & doorway crossing
         if self.tracking_engine and self.yolo_detector:
             if now - self.last_track_sync > 60.0:
                 self._sync_zones()
@@ -292,9 +288,17 @@ class ChannelWorker(threading.Thread):
 
             try:
                 dets = self.yolo_detector.infer(frame)
+                motion = self.camera_motion.estimate(frame, dets)
+                if motion is not None:
+                    self.state["cameraMovedAt"] = _iso(now)
                 tracks, removed_tracks, events, diagnostics = self.tracking_engine.evaluate(
-                    dets, face_matches, now, return_diagnostics=True
+                    dets, face_matches, now, return_diagnostics=True, frame=frame, camera_motion=motion
                 )
+                # A face that matched employee B on a body already locked to employee A is a misidentification
+                # (e.g. A mid-turn): don't log it as a sighting of B.
+                blocked_faces = {
+                    d.get("faceId") for d in diagnostics if str(d.get("note", "")).startswith("Protected")
+                }
 
                 # Prepare single atomic frame batch payload
                 tracks_data = [
@@ -366,6 +370,21 @@ class ChannelWorker(threading.Thread):
 
             except Exception as e:
                 log.warning("[tracking] tracking evaluation failed: %s", e)
+
+        # 3. Confirmed face matches become sightings (unless the body tracker vetoed them above)
+        for face_id, employee_id, similarity in pending_matches:
+            if face_id in blocked_faces:
+                log.info("[recognition] ignored %s match (%.2f): face is on a body locked to another employee",
+                         self.m.gallery.names.get(employee_id, employee_id), similarity)
+                continue
+            hits = self.matches[employee_id]
+            hits.append((now, similarity))
+            while hits and now - hits[0][0] > cfg["confirmWindowSec"]:
+                hits.popleft()
+            if len(hits) >= cfg["confirmFrames"]:
+                best = max(s for _, s in hits)
+                hits.clear()
+                self.m.report(employee_id, best, self.camera["id"], self.channel_no, now)
 
     def stop(self) -> None:
         self.stop_event.set()

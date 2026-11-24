@@ -19,6 +19,18 @@ from identity_latching_engine import IdentityLatchingEngine, IdentityLatchState
 
 log = logging.getLogger("ai.tracking")
 
+# Identity handoff (see ZoneTrackingEngine._hand_off_identities). Clothing similarity is the correlation of
+# torso colour histograms; measured on the office cameras: same person 0.88-0.98, different people median 0.31,
+# 95th percentile 0.47-0.59.
+HANDOFF_WINDOW_SEC = 90.0     # same spot: a lost named person can hand their name on for this long
+SPOT_MIN_CORR = 0.60          # ... if the clothing is at least this similar
+REID_WINDOW_SEC = 20 * 60     # same clothes: how long a lost person's look is remembered
+REID_MIN_CORR_NEAR = 0.70     # clothing similarity needed near where they were lost
+REID_MIN_CORR_FAR = 0.85      # ... anywhere else on this lens
+REID_MARGIN = 0.15            # the best match must beat the next lost person by this much
+REID_MIN_SAMPLES = 3          # frames a new body is seen before its clothing is trusted
+LOW_ONLY_MAX_SEC = 60.0       # a track kept alive only by weak detections is dropped after this long
+
 
 def _ccw(A, B, C):
     return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
@@ -118,6 +130,11 @@ class Track:
         self.last_biometric_at: Optional[float] = None
         self.face_id: Optional[str] = None
         self.face_quality: float = 0.0
+        # Clothing colour signature (torso HSV histogram, averaged over frames) for re-identification
+        self.appearance: Optional[np.ndarray] = None
+        self.appearance_n = 0
+        # Since when only weak (low-confidence) detections have kept this track alive
+        self.low_only_since: Optional[float] = None
 
         # v2.9 — ILE extended tracking fields
         self.identity_state: str = IdentityLatchState.UNVERIFIED
@@ -139,6 +156,7 @@ class Track:
 
     def predict(self, dt: float) -> np.ndarray:
         """Predict bounding box based on velocity."""
+        dt = min(dt, 1.0)  # extrapolating a stale speed further only drifts away from where the person was
         dx = self.velocity[0] * dt
         dy = self.velocity[1] * dt
         pred = self.bbox.copy()
@@ -182,8 +200,8 @@ class BytePersonTracker:
 
     def __init__(
         self,
-        max_lost_sec: float = 3.5,
-        iou_threshold: float = 0.25,
+        max_lost_sec: float = 6.0,
+        iou_threshold: float = 0.20,
         high_threshold: float = 0.30,
         low_threshold: float = 0.10,
     ):
@@ -191,14 +209,25 @@ class BytePersonTracker:
         self.iou_threshold = iou_threshold
         self.high_threshold = high_threshold
         self.low_threshold = low_threshold
-        self.next_track_id = 101  # Human-friendly track numbering
+        # Unique per run (track numbers are stored, and a restarted service must not reuse an earlier run's numbers).
+        self.next_track_id = 101 + (int(time.time()) % 1_000_000) * 100
         self.tracks: Dict[int, Track] = {}
+
+    def apply_camera_motion(self, M: np.ndarray) -> None:
+        """The lens itself moved (pan / tilt / zoom): move every track the same way before matching, so a camera
+        movement isn't mistaken for every person jumping (which would break all tracks at once)."""
+        A, t = M[:, :2], M[:, 2]
+        for tr in self.tracks.values():
+            corners = np.array([[tr.bbox[0], tr.bbox[1]], [tr.bbox[2], tr.bbox[3]]], dtype=np.float32) @ A.T + t
+            tr.bbox = np.array([corners[0, 0], corners[0, 1], corners[1, 0], corners[1, 1]], dtype=np.float32)
+            if tr.history:
+                tr.history = [tuple(v) for v in (np.array(tr.history, dtype=np.float32) @ A.T + t).tolist()]
 
     def _effective_max_lost(self, tr: Track) -> float:
         """Stationary (seated) employees get a longer lost window than moving ones."""
         speed = (tr.velocity[0] ** 2 + tr.velocity[1] ** 2) ** 0.5
         if speed < 2.0:  # px/s — essentially stationary
-            return max(self.max_lost_sec, 10.0)   # 10 s grace for seated employees
+            return max(self.max_lost_sec, 20.0)   # 20 s grace for seated employees (e.g. moving a chair)
         return self.max_lost_sec
 
     def update(self, detections: List[np.ndarray], now: float) -> Tuple[List[Track], List[Track]]:
@@ -208,8 +237,8 @@ class BytePersonTracker:
         # 1. Purge expired lost tracks (velocity-aware timeout)
         to_del = []
         for tid, tr in self.tracks.items():
-            if tr.state == TrackState.LOST and tr.lost_since and (
-                now - tr.lost_since > self._effective_max_lost(tr)
+            if (tr.state == TrackState.LOST and tr.lost_since and now - tr.lost_since > self._effective_max_lost(tr)) or (
+                tr.low_only_since is not None and now - tr.low_only_since > LOW_ONLY_MAX_SEC
             ):
                 tr.state = TrackState.REMOVED
                 removed_tracks.append(tr)
@@ -260,6 +289,7 @@ class BytePersonTracker:
                 if tr.track_id in matched_tracks or d_idx in matched_high_dets:
                     continue
                 tr.update(high_dets[d_idx][:4], float(high_dets[d_idx][4]), now)
+                tr.low_only_since = None
                 matched_tracks.add(tr.track_id)
                 matched_high_dets.add(d_idx)
 
@@ -273,6 +303,8 @@ class BytePersonTracker:
                 dt = max(0.0, now - tr.last_seen)
                 pred_box = tr.predict(dt)
                 tc = ((pred_box[0] + pred_box[2]) / 2.0, (pred_box[1] + pred_box[3]) / 2.0)
+                # At a few frames per second a person can move well over 220 px between frames: scale with body size.
+                max_dist = max(220.0, 1.5 * float(pred_box[2] - pred_box[0]))
                 best_det_idx = None
                 best_cost = 9999.0
 
@@ -280,14 +312,21 @@ class BytePersonTracker:
                     if d_idx in matched_remain_dets:
                         continue
                     iou_val = compute_iou(pred_box, det[:4])
+                    if d_idx < len(low_dets):
+                        # Weak detection (partly hidden person, or maybe a coat on a chair): only keeps alive a
+                        # track it clearly overlaps, never one nearby.
+                        if iou_val >= 0.30 and 1.0 - iou_val < best_cost:
+                            best_cost = 1.0 - iou_val
+                            best_det_idx = d_idx
+                        continue
                     dc = ((det[0] + det[2]) / 2.0, (det[1] + det[3]) / 2.0)
                     dist = np.hypot(tc[0] - dc[0], tc[1] - dc[1])
 
                     # Prefer high IoU or reasonable centroid distance
                     if iou_val >= 0.20:
                         cost = 1.0 - iou_val
-                    elif dist <= 220.0:
-                        cost = dist / 220.0 + 1.0
+                    elif dist <= max_dist:
+                        cost = dist / max_dist + 1.0
                     else:
                         continue
 
@@ -298,6 +337,10 @@ class BytePersonTracker:
                 if best_det_idx is not None:
                     det = all_remain_dets[best_det_idx]
                     tr.update(det[:4], float(det[4]), now)
+                    if float(det[4]) >= self.high_threshold:
+                        tr.low_only_since = None
+                    elif tr.low_only_since is None:
+                        tr.low_only_since = now
                     matched_tracks.add(tr.track_id)
                     matched_remain_dets.add(best_det_idx)
 
@@ -305,6 +348,13 @@ class BytePersonTracker:
         for tr in active_tracks:
             if tr.track_id not in matched_tracks:
                 tr.mark_lost(now)
+
+        # High detections matched in stage 2 belong to an existing track: they must not also start a new one.
+        n_low = len(low_dets)
+        remain_high_idx = [i for i in range(len(high_dets)) if i not in matched_high_dets]
+        for r_idx in matched_remain_dets:
+            if r_idx >= n_low:
+                matched_high_dets.add(remain_high_idx[r_idx - n_low])
 
         # 6. Unmatched high-confidence detections initialize new tracks
         for d_idx, det in enumerate(high_dets):
@@ -350,12 +400,125 @@ class ZoneTrackingEngine:
     def __init__(self, width: int = 1920, height: int = 1080):
         self.width = width
         self.height = height
-        self.tracker = BytePersonTracker(max_lost_sec=3.5, iou_threshold=0.25)
+        self.tracker = BytePersonTracker(max_lost_sec=6.0, iou_threshold=0.20)
         self.zones: List[dict] = []
         self.lines: List[dict] = []
         self.latest_diagnostics: List[dict] = []
         # v2.9 — Identity Latching Engine
         self.ile = IdentityLatchingEngine()
+        # Named people whose body track was lost: employee_id -> {bbox, last_seen, name, code, appearance}
+        self.recently_lost: Dict[str, dict] = {}
+        self.appearance_enabled = False  # set once frames are passed to evaluate()
+
+    # ------------------------------------------------------------- clothing signature
+
+    @staticmethod
+    def _torso_signature(frame: np.ndarray, bbox: np.ndarray) -> Optional[np.ndarray]:
+        """Colour histogram of the torso (shirt), which stays the same all day and tells most people apart."""
+        h_img, w_img = frame.shape[:2]
+        x1, y1, x2, y2 = (int(round(float(v))) for v in bbox[:4])
+        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w_img, x2), min(h_img, y2)
+        w, h = x2 - x1, y2 - y1
+        if w < 16 or h < 32:
+            return None
+        crop = frame[y1 + int(0.20 * h) : y1 + int(0.65 * h), x1 + int(0.15 * w) : x2 - int(0.15 * w)]
+        if crop.size == 0:
+            return None
+        hist = cv2.calcHist([cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)], [0, 1, 2], None, [12, 6, 4], [0, 180, 0, 256, 0, 256])
+        cv2.normalize(hist, hist, 1.0, 0, cv2.NORM_L1)
+        return hist.flatten().astype(np.float32)
+
+    def _update_appearance(self, tracks: List[Track], frame: np.ndarray, now: float) -> None:
+        for tr in tracks:
+            if tr.last_seen != now:
+                continue  # not matched to a detection in this frame
+            if any(o is not tr and compute_iou(tr.bbox, o.bbox) > 0.25 for o in tracks):
+                continue  # overlapping someone: the crop would mix two people's clothes
+            sig = self._torso_signature(frame, tr.bbox)
+            if sig is None:
+                continue
+            tr.appearance = sig if tr.appearance is None else (0.8 * tr.appearance + 0.2 * sig).astype(np.float32)
+            tr.appearance_n += 1
+
+    @staticmethod
+    def _clothing_similarity(a: Optional[np.ndarray], b: Optional[np.ndarray]) -> Optional[float]:
+        if a is None or b is None:
+            return None
+        return float(cv2.compareHist(a, b, cv2.HISTCMP_CORREL))
+
+    # ------------------------------------------------------------- identity handoff
+
+    def _remember_lost(self, tr: Track) -> None:
+        self.recently_lost[tr.employee_id] = {
+            "bbox": tr.bbox.copy(),
+            "last_seen": tr.last_seen,
+            "name": tr.employee_name,
+            "code": getattr(tr, "employee_code", None),
+            "appearance": None if tr.appearance is None else tr.appearance.copy(),
+        }
+
+    def _hand_off_identities(self, active_tracks: List[Track], removed_tracks: List[Track], now: float) -> None:
+        """Give a new, unnamed body track the name of a recently lost person when it is clearly them, so office time
+        doesn't depend on catching the face again. Two ways, on the same lens:
+
+          same spot:     it appeared where a named person was lost within HANDOFF_WINDOW_SEC, in similar clothes;
+          same clothes:  its clothing clearly matches a person lost within REID_WINDOW_SEC (stricter if elsewhere).
+
+        Only when one lost person clearly fits (REID_MARGIN ahead of any other), they are not on another live track,
+        and the body appeared after they were lost. A real face match on the track still overrides the inherited name.
+        """
+        for rt in removed_tracks:
+            if rt.employee_id:
+                self._remember_lost(rt)
+        # Named tracks that are lost but not yet removed can hand off straight away.
+        lost_named = {t.employee_id: t for t in self.tracker.tracks.values() if t.state == TrackState.LOST and t.employee_id}
+        for t in lost_named.values():
+            self._remember_lost(t)
+        on_track = {t.employee_id for t in active_tracks if t.employee_id}
+        for emp in [e for e, v in self.recently_lost.items() if e in on_track or now - v["last_seen"] > REID_WINDOW_SEC]:
+            del self.recently_lost[emp]
+        if not self.recently_lost:
+            return
+
+        for tr in active_tracks:
+            if tr.employee_id:
+                continue
+            if self.appearance_enabled and tr.appearance_n < REID_MIN_SAMPLES:
+                continue  # wait a moment so the clothing can be checked
+            cx, cy = (tr.bbox[0] + tr.bbox[2]) / 2.0, (tr.bbox[1] + tr.bbox[3]) / 2.0
+            cands: List[Tuple[float, str, str]] = []
+            for emp, lost in self.recently_lost.items():
+                if tr.started_at < lost["last_seen"] - 2.0:
+                    continue  # this body was already there while the person was still tracked: someone else
+                lb = lost["bbox"]
+                lx, ly = (lb[0] + lb[2]) / 2.0, (lb[1] + lb[3]) / 2.0
+                near = np.hypot(cx - lx, cy - ly) <= 1.2 * max(float(lb[2] - lb[0]), float(tr.bbox[2] - tr.bbox[0]))
+                age = now - lost["last_seen"]
+                corr = self._clothing_similarity(tr.appearance, lost["appearance"])
+                if near and age <= HANDOFF_WINDOW_SEC and (corr is None or corr >= SPOT_MIN_CORR):
+                    cands.append((corr if corr is not None else SPOT_MIN_CORR, emp, "same spot"))
+                elif corr is not None and corr >= (REID_MIN_CORR_NEAR if near else REID_MIN_CORR_FAR):
+                    cands.append((corr, emp, "same clothes"))
+            if not cands:
+                continue
+            cands.sort(reverse=True)
+            if len(cands) > 1 and cands[0][0] - cands[1][0] < REID_MARGIN:
+                continue  # two lost people fit about equally: wait for a face
+            score, emp, why = cands[0]
+            lost = self.recently_lost.pop(emp)
+            tr.employee_id, tr.employee_name, tr.employee_code = emp, lost["name"], lost["code"]
+            tr.identity_status = IdentityState.TRACKING_WITHOUT_FACE
+            old = lost_named.get(emp)
+            if old is not None and old.track_id in self.tracker.tracks:
+                # The old lost track must not come back as a second copy of this person.
+                old.state = TrackState.REMOVED
+                del self.tracker.tracks[old.track_id]
+                self.ile.mark_track_removed(old.track_id, now)
+                removed_tracks.append(old)
+            log.info(
+                "Identity handoff (%s, clothing %s, after %.0fs): track %s continues %s",
+                why, f"{score:.2f}" if self.appearance_enabled else "n/a", now - lost["last_seen"], tr.track_id, lost["name"] or emp,
+            )
 
     def set_config(self, zones: List[dict], lines: List[dict]):
         self.zones = zones
@@ -383,6 +546,8 @@ class ZoneTrackingEngine:
         face_matches: List[Any],
         now: float,
         return_diagnostics: bool = False,
+        frame: Optional[np.ndarray] = None,
+        camera_motion: Optional[np.ndarray] = None,
     ) -> Any:
         """Process person detections, execute 1-to-1 anatomical face association,
         apply 5-state identity protection, and check doorway line crossings.
@@ -392,6 +557,13 @@ class ZoneTrackingEngine:
         - List of (face_box_xywh, employee_id, employee_name, similarity, face_id, quality_dict)
         - List of DetectedFace objects (with .box, .embedding, etc.)
         """
+        if camera_motion is not None:
+            self.tracker.apply_camera_motion(camera_motion)
+            A, t = camera_motion[:, :2], camera_motion[:, 2]
+            for lost in self.recently_lost.values():
+                b = lost["bbox"]
+                c = np.array([[b[0], b[1]], [b[2], b[3]]], dtype=np.float32) @ A.T + t
+                lost["bbox"] = np.array([c[0, 0], c[0, 1], c[1, 0], c[1, 1]], dtype=np.float32)
         active_tracks, removed_tracks = self.tracker.update(detections, now)
         events: List[dict] = []
         diagnostics: List[dict] = []
@@ -399,6 +571,11 @@ class ZoneTrackingEngine:
         # Notify ILE of removed tracks
         for rt in removed_tracks:
             self.ile.mark_track_removed(rt.track_id, now)
+
+        if frame is not None:
+            self.appearance_enabled = True
+            self._update_appearance(active_tracks, frame, now)
+        self._hand_off_identities(active_tracks, removed_tracks, now)
 
         # -------------------------------------------------------------
         # 1. Parse Input Faces into Standardized Format

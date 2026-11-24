@@ -26,7 +26,7 @@ from app.services import settings_store
 from app.database import get_db, utcnow
 from app.errors import ApiError
 from app.models import Employee, FaceEnrollment, FaceEnrollmentSession, FaceTemplate, UserRole
-from app.security import AuthUser, current_user, require_role
+from app.security import AuthUser, current_user, json_body, require_role
 from app.serialize import value
 from app.crypto import encrypt_embedding
 
@@ -489,3 +489,149 @@ def revoke(employee_id: str, db: Session = Depends(get_db)):
 
     deleted = (r1.rowcount or 0) + (r2.rowcount or 0)
     return {"success": True, "message": f"Revoked biometric data for employee ({deleted} templates removed)", "deleted": deleted}
+
+
+# ---------------------------------------------------------------- enrol from the office camera (live scanning)
+#
+# The dashboard polls GET /scan/{camera}/{lens} (the AI service's latest frame + every face's "full view"
+# verdict). When the chosen face is a full view it calls POST /{employee}/scan-capture for exactly that face.
+# Accepted captures wait here, in memory, until HR presses Save: embeddings never reach the browser, and
+# nothing is enrolled without the consent confirmation in /scan-save.
+
+SCAN_PENDING_TTL = timedelta(minutes=30)
+SCAN_MAX_PENDING = 12  # per employee and operator
+OTHER_PERSON_SIM = 0.50  # a capture this similar to someone else (and more than to the employee) is refused
+DUPLICATE_SIM = 0.95  # a capture this similar to one already taken adds nothing
+_scan_pending: dict[str, dict] = {}
+
+
+def _ai_headers() -> dict:
+    return {"X-Service-Key": settings.AI_SERVICE_KEY}
+
+
+def _purge_scan_pending() -> None:
+    cutoff = utcnow() - SCAN_PENDING_TTL
+    for token in [t for t, p in _scan_pending.items() if p["at"] < cutoff]:
+        _scan_pending.pop(token, None)
+
+
+def _cos(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))  # both are L2-normalised
+
+
+@router.get("/scan/{camera_id}/{channel_no}", dependencies=[Depends(can_manage)])
+async def scan_lens(camera_id: str, channel_no: int):
+    """Live picture of one lens with each face's full-view verdict (for the camera enrolment scanner)."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.get(f"{settings.AI_SERVICE_URL}/scan/{camera_id}/{channel_no}", headers=_ai_headers())
+    except httpx.HTTPError as exc:
+        raise ApiError(503, f"AI service unreachable: {exc}")
+    if res.status_code != 200:
+        raise ApiError(res.status_code if res.status_code < 500 else 502, res.json().get("detail", "Scan failed") if res.content else "Scan failed")
+    return {"success": True, "data": res.json()}
+
+
+@router.post("/{employee_id}/scan-capture")
+async def scan_capture(employee_id: str, body: dict = Depends(json_body), user: AuthUser = Depends(can_manage), db: Session = Depends(get_db)):
+    """Take one full-view face from a recent scan for this employee. Returns ACCEPTED (with a review crop and a
+    token), or why it was refused: OTHER_PERSON, DUPLICATE, NOT_FULL_VIEW, EXPIRED, LIMIT."""
+    emp = db.get(Employee, employee_id)
+    if not emp:
+        raise ApiError(404, "Employee not found")
+    _purge_scan_pending()
+    mine = [p for p in _scan_pending.values() if p["employee_id"] == emp.id and p["user_id"] == user.id]
+    if len(mine) >= SCAN_MAX_PENDING:
+        return {"success": True, "status": "LIMIT", "message": f"{SCAN_MAX_PENDING} samples waiting: save or remove some first."}
+
+    payload = {
+        "cameraId": str(body.get("cameraId") or ""),
+        "channelNo": int(body.get("channelNo") or 0),
+        "scanId": str(body.get("scanId") or ""),
+        "faceIndex": int(body.get("faceIndex") if body.get("faceIndex") is not None else -1),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.post(f"{settings.AI_SERVICE_URL}/scan/capture", json=payload, headers=_ai_headers())
+    except httpx.HTTPError as exc:
+        raise ApiError(503, f"AI service unreachable: {exc}")
+    if res.status_code == 410:
+        return {"success": True, "status": "EXPIRED", "message": "The picture moved on; trying again."}
+    if res.status_code == 422:
+        return {"success": True, "status": "NOT_FULL_VIEW", "message": res.json().get("detail", "Not a full view")}
+    if res.status_code != 200:
+        raise ApiError(502, "Capture failed in the AI service")
+    cap = res.json()
+    emb = cap["embedding"]
+
+    # Never enrol someone else's face for this employee.
+    matches = cap.get("matches") or []
+    own = next((m["similarity"] for m in matches if m["employeeId"] == emp.id), None)
+    top = matches[0] if matches else None
+    if top and top["employeeId"] != emp.id and top["similarity"] >= OTHER_PERSON_SIM and top["similarity"] > (own or 0) + 0.05:
+        return {
+            "success": True,
+            "status": "OTHER_PERSON",
+            "message": f"This face looks like {top['name']} ({round(top['similarity'] * 100)}%), not {emp.full_name}.",
+            "looksLike": top,
+        }
+    if any(_cos(emb, p["embedding"]) >= DUPLICATE_SIM for p in mine):
+        return {"success": True, "status": "DUPLICATE", "message": "Almost identical to a sample already taken."}
+
+    token = secrets.token_urlsafe(16)
+    _scan_pending[token] = {
+        "employee_id": emp.id,
+        "user_id": user.id,
+        "embedding": emb,
+        "at": utcnow(),
+        "source": f"{payload['cameraId']}:{payload['channelNo']}",
+    }
+    return {
+        "success": True,
+        "status": "ACCEPTED",
+        "token": token,
+        "crop": cap["crop"],
+        "pose": cap.get("pose"),
+        "qualityScore": cap.get("qualityScore"),
+        "faceSizePx": cap.get("faceSizePx"),
+        "ownSimilarity": own,
+    }
+
+
+@router.post("/{employee_id}/scan-save")
+def scan_save(employee_id: str, body: dict = Depends(json_body), user: AuthUser = Depends(can_manage), db: Session = Depends(get_db)):
+    """Enrol the reviewed camera captures (by token). Requires the employee's consent, like every enrolment."""
+    if str(body.get("consent")).lower() not in ("true", "1", "yes"):
+        raise ApiError(400, "The employee's consent to face recognition is required before enrolment.")
+    emp = db.get(Employee, employee_id)
+    if not emp:
+        raise ApiError(404, "Employee not found")
+    _purge_scan_pending()
+    tokens = [t for t in (body.get("tokens") or []) if isinstance(t, str)]
+    picked = [
+        _scan_pending[t] for t in tokens
+        if t in _scan_pending and _scan_pending[t]["employee_id"] == emp.id and _scan_pending[t]["user_id"] == user.id
+    ]
+    if not picked:
+        raise ApiError(400, "No captured samples to save (they expire after 30 minutes).")
+
+    make_room(db, emp.id, len(picked))
+    now = utcnow()
+    for p in picked:
+        add_template(
+            db, emp.id, p["embedding"], source="CCTV", recorded_by_id=user.id,
+            authorization_reference="operator-confirmed-consent", now=now,
+        )
+    db.commit()
+    for t in tokens:
+        _scan_pending.pop(t, None)
+    # Drop this operator's other unsaved captures for the employee (they were removed in the review).
+    for t in [t for t, p in _scan_pending.items() if p["employee_id"] == emp.id and p["user_id"] == user.id]:
+        _scan_pending.pop(t, None)
+
+    summary = _summary_rows(db, emp.id)[0]
+    return {
+        "success": True,
+        "message": f"{len(picked)} camera sample{'s' if len(picked) != 1 else ''} enrolled for {emp.full_name}",
+        "data": summary,
+    }

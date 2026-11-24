@@ -193,6 +193,17 @@ export const api = {
       method: 'DELETE',
     }),
 
+  // Enrol from the office camera (live scanning; only full views are captured)
+  scanLens: (cameraId: string, channelNo: number) =>
+    apiFetch<{ success: boolean; data: LensScan }>(`/faces/scan/${cameraId}/${channelNo}`),
+  scanCapture: (employeeId: string, req: { cameraId: string; channelNo: number; scanId: string; faceIndex: number }) =>
+    apiFetch<ScanCaptureResult>(`/faces/${employeeId}/scan-capture`, { method: 'POST', body: JSON.stringify(req) }),
+  scanSave: (employeeId: string, tokens: string[]) =>
+    apiFetch<{ success: boolean; message: string; data: any }>(`/faces/${employeeId}/scan-save`, {
+      method: 'POST',
+      body: JSON.stringify({ tokens, consent: true }),
+    }),
+
   // Phone self-enrolment via one-time QR link
   createMobileEnrollSession: (employeeId: string) =>
     apiFetch<{ success: boolean; data: MobileEnrollSessionCreated }>(`/faces/${employeeId}/mobile-session`, {
@@ -471,6 +482,33 @@ export interface SettingsSection {
   customised: string[];
 }
 
+/** One face in a live lens scan. box = [x, y, w, h] as fractions of the picture. */
+export interface ScanFace {
+  index: number;
+  box: [number, number, number, number];
+  fullView: boolean;
+  issues: { code: string; text: string }[];
+  pose: 'FRONT' | 'LEFT' | 'RIGHT' | 'DOWN' | null;
+  qualityScore: number;
+  looksLike: { employeeId: string; name: string; similarity: number } | null;
+}
+
+export interface LensScan {
+  scanId: string;
+  cameraId: string;
+  channelNo: number;
+  width: number;
+  height: number;
+  /** data: URL of the (downscaled) picture the faces refer to */
+  image: string;
+  faces: ScanFace[];
+  at: number;
+}
+
+export type ScanCaptureResult =
+  | { success: boolean; status: 'ACCEPTED'; token: string; crop: string; pose: ScanFace['pose']; qualityScore: number; faceSizePx: number; ownSimilarity: number | null }
+  | { success: boolean; status: 'OTHER_PERSON' | 'DUPLICATE' | 'NOT_FULL_VIEW' | 'EXPIRED' | 'LIMIT'; message: string };
+
 export interface CameraLens {
   id: string;
   cameraId: string;
@@ -666,6 +704,11 @@ export interface WorkDayRow {
   awaySeconds: number;
   sightings: number;
   isLate: boolean;
+  /** Minutes after the scheduled start the employee was first seen (0 when on time). */
+  lateByMinutes: number;
+  longestAwaySeconds: number;
+  /** Working hours on this date; startAt/endAt are UTC instants for placing on a timeline. */
+  schedule: { name: string; start: string; end: string; graceMinutes: number; startAt: string; endAt: string } | null;
   sessions: WorkSession[];
   awayPeriods: AwayPeriod[];
 }
