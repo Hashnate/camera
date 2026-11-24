@@ -95,7 +95,7 @@ export default function EmployeesPage() {
 
       <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 space-y-4 max-w-[1440px] w-full mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-          <div className="inline-flex p-1 rounded-xl bg-slate-200/50 ring-1 ring-inset ring-slate-200/70 self-start" role="tablist" aria-label="Filter employees">
+          <div className="inline-flex max-w-full overflow-x-auto p-1 rounded-xl bg-slate-200/50 ring-1 ring-inset ring-slate-200/70 self-start" role="tablist" aria-label="Filter employees">
             {tabs.map((t) => (
               <button
                 key={t.key}
@@ -103,7 +103,7 @@ export default function EmployeesPage() {
                 role="tab"
                 aria-selected={filter === t.key}
                 onClick={() => setFilter(t.key)}
-                className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-medium transition ${
+                className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-medium whitespace-nowrap transition ${
                   filter === t.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
@@ -113,7 +113,7 @@ export default function EmployeesPage() {
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <label className="relative w-full sm:w-72">
               <span className="sr-only">Search employees</span>
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -125,11 +125,6 @@ export default function EmployeesPage() {
                 className="w-full h-9 bg-white rounded-lg pl-9 pr-3 text-[13px] text-slate-800 placeholder-slate-400 ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </label>
-            {canManage && (
-              <Link href="/dashboard/employees/register" className={`${btn.primary} md:hidden`} aria-label="Add employee">
-                <UserPlus className="w-4 h-4" />
-              </Link>
-            )}
           </div>
         </div>
 
@@ -156,15 +151,16 @@ export default function EmployeesPage() {
           ) : filtered.length === 0 ? (
             <EmptyState icon={Search} title="No matches" description="Try another name, or clear the filter." />
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-left text-[13px]">
               <thead className="bg-slate-50/70 border-b border-slate-100 text-[11.5px] font-medium text-slate-500">
                 <tr>
-                  <th className="py-2.5 px-5 font-medium">Employee</th>
+                  <th className="py-2.5 pl-4 pr-3 sm:px-5 font-medium">Employee</th>
                   <th className="py-2.5 px-3 font-medium hidden lg:table-cell">Role</th>
                   <th className="py-2.5 px-3 font-medium hidden xl:table-cell">Hours</th>
-                  <th className="py-2.5 px-3 font-medium">Face</th>
+                  <th className="py-2.5 px-3 font-medium hidden sm:table-cell">Face</th>
                   <th className="py-2.5 px-3 font-medium hidden md:table-cell">Status</th>
-                  <th className="py-2.5 px-5 font-medium text-right">
+                  <th className="py-2.5 pl-2 pr-3 sm:px-5 font-medium text-right">
                     <span className="sr-only">Actions</span>
                   </th>
                 </tr>
@@ -174,15 +170,29 @@ export default function EmployeesPage() {
                   const enrolled = hasFace(emp);
                   return (
                     <tr key={emp.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="py-3 px-5">
+                      <td className="py-3 pl-4 pr-3 sm:px-5">
                         <div className="flex items-center gap-3 min-w-0">
                           <Avatar name={emp.fullName} id={emp.id} />
                           <div className="min-w-0">
-                            <p className="font-medium text-slate-900 truncate">{emp.fullName}</p>
-                            <p className="text-[12px] text-slate-500 truncate">
+                            <p className="font-medium text-slate-900 sm:truncate">{emp.fullName}</p>
+                            <p className="text-[12px] text-slate-500 sm:truncate">
                               <span className="font-mono text-[11.5px]">{emp.employeeCode}</span>
-                              {emp.email ? ` · ${emp.email}` : ''}
+                              {emp.email ? <span className="hidden sm:inline"> · {emp.email}</span> : ''}
                             </p>
+                            {/* Phones: face status sits under the name instead of in its own column */}
+                            <div className="sm:hidden mt-1.5 flex flex-wrap items-center gap-1.5">
+                              {enrolled ? <PresenceBadge tone="in">Enrolled</PresenceBadge> : <PresenceBadge tone="away">Needs a face</PresenceBadge>}
+                              {canManage && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEnrolling(emp)}
+                                  className="inline-flex items-center gap-1 h-7 px-2 rounded-md text-[12px] font-medium text-blue-700 bg-blue-50/60 hover:bg-blue-50 transition"
+                                >
+                                  <ScanFace className="w-3.5 h-3.5" />
+                                  {enrolled ? 'Update' : 'Enrol'}
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -193,8 +203,8 @@ export default function EmployeesPage() {
                       <td className="py-3 px-3 hidden xl:table-cell text-slate-600 tabular-nums">
                         {emp.workSchedule ? `${emp.workSchedule.startTime} – ${emp.workSchedule.endTime}` : '—'}
                       </td>
-                      <td className="py-3 px-3">
-                        <div className="flex items-center gap-2">
+                      <td className="py-3 px-3 hidden sm:table-cell">
+                        <div className="flex flex-wrap items-center gap-2">
                           {enrolled ? <PresenceBadge tone="in">Enrolled</PresenceBadge> : <PresenceBadge tone="away">Needs a face</PresenceBadge>}
                           {canManage && (
                             <button
@@ -214,7 +224,7 @@ export default function EmployeesPage() {
                           {emp.isActive ? 'Active' : 'Inactive'}
                         </span>
                       </td>
-                      <td className="py-3 px-5">
+                      <td className="py-3 pl-2 pr-3 sm:px-5">
                         <div className="flex items-center justify-end gap-1">
                           {canManage && (<>
                           <button
@@ -243,12 +253,13 @@ export default function EmployeesPage() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </Card>
       </main>
 
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-sm" role="status">
+        <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:bottom-5 sm:right-5 z-50 sm:max-w-sm" role="status">
           <div
             className={`flex items-center gap-2.5 rounded-xl px-4 py-3 text-[13px] shadow-lg ring-1 ${
               toast.type === 'success' ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-rose-800 ring-rose-200'

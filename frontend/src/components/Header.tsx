@@ -32,6 +32,7 @@ export function Header({ title, subtitle, actions }: HeaderProps) {
       : 'bg-slate-100 text-slate-600 ring-slate-500/10';
 
   return (
+    <>
     <header className="sticky top-0 z-30 bg-[#f6f7f9]/85 backdrop-blur-md border-b border-slate-200/70">
       <div className="h-16 px-4 sm:px-6 lg:px-8 flex items-center gap-3">
         <button
@@ -62,5 +63,8 @@ export function Header({ title, subtitle, actions }: HeaderProps) {
         )}
       </div>
     </header>
+    {/* On phones the page actions get their own row under the bar instead of being hidden. */}
+    {actions && <div className="md:hidden flex flex-wrap items-center gap-2 px-4 sm:px-6 pt-4 [&>*]:flex-1 [&>*]:min-w-[9rem]">{actions}</div>}
+    </>
   );
 }

@@ -64,7 +64,7 @@ export function AutoAttendancePanel({ onActivity }: { onActivity?: () => void })
 
   return (
     <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
-      <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+      <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <ScanFace className="w-4 h-4 text-blue-600" />
           <h3 className="text-sm font-bold text-slate-900">Automatic attendance (face recognition)</h3>

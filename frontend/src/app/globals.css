@@ -16,6 +16,20 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Phones: no sideways page scroll (wide tables scroll inside their own card), and form fields at 16px so iOS
+   doesn't zoom the page when one is focused. */
+html,
+body {
+  overflow-x: clip;
+}
+@media (max-width: 639px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 /* Keyboard focus is always visible; mouse clicks stay clean. */
 :focus-visible {
   outline: 2px solid #2563eb;

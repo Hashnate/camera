@@ -329,7 +329,7 @@ export default function BreaksDashboardPage() {
   return (
     <>
     <Header />
-    <div className="flex-1 px-4 sm:px-6 lg:px-8 py-6 max-w-[1440px] w-full mx-auto space-y-6">
+    <div className="flex-1 px-4 sm:px-6 lg:px-8 py-6 max-w-[1440px] w-full mx-auto space-y-5 sm:space-y-6">
       {/* Status Toast Message */}
       {statusMessage && (
         <div
@@ -339,7 +339,7 @@ export default function BreaksDashboardPage() {
               : 'bg-rose-50 border-rose-200 text-rose-800'
           }`}
         >
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
             {statusMessage.type === 'success' ? (
               <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
             ) : (
@@ -357,14 +357,14 @@ export default function BreaksDashboardPage() {
       )}
 
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200 pb-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200 pb-5 sm:pb-6">
         <div>
           <p className="text-[13px] text-slate-500 max-w-xl">
             Breaks are detected when someone walks out through a door line, and checked against each break allowance.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {canManage && (
           <button
             onClick={() => setShowDeclareModal(true)}
@@ -398,7 +398,7 @@ export default function BreaksDashboardPage() {
 
       {/* Date Filter & Tab Switcher Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-2">
-        <div className="flex items-center gap-6 overflow-x-auto">
+        <div className="flex items-center gap-5 sm:gap-6 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
           <button
             onClick={() => setActiveTab('live')}
             className={`pb-3 text-sm font-semibold transition-colors relative flex items-center gap-2 whitespace-nowrap ${
@@ -478,7 +478,7 @@ export default function BreaksDashboardPage() {
       {/* ============================================================== */}
       {activeTab === 'live' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {liveEmployees.length === 0 ? (
               <div className="col-span-full py-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
                 No active employee tracking sessions observed for {selectedDate}.
@@ -507,12 +507,12 @@ export default function BreaksDashboardPage() {
                 return (
                   <div
                     key={emp.employeeId}
-                    className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-5 hover:shadow-md transition-shadow"
+                    className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 sm:p-6 space-y-5 hover:shadow-md transition-shadow"
                   >
                     {/* Top: Employee Info */}
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-bold text-slate-900 text-base">{emp.employeeName}</h3>
                           <span className="text-xs px-2 py-0.5 font-semibold bg-slate-100 text-slate-600 rounded">
                             {emp.employeeCode}
@@ -643,7 +643,7 @@ export default function BreaksDashboardPage() {
                     </div>
 
                     {/* Freshness & Last verified movement */}
-                    <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1">
+                    <div className="text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pt-1">
                       <span>
                         Sensor:{' '}
                         <span
@@ -675,9 +675,9 @@ export default function BreaksDashboardPage() {
       {/* ============================================================== */}
       {activeTab === 'ledger' && (
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-200 flex items-center justify-between">
+          <div className="p-4 sm:p-6 border-b border-slate-200 flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-slate-900 text-lg">Break & Movement Intervals Ledger</h3>
+              <h3 className="font-bold text-slate-900 text-base sm:text-lg">Break & Movement Intervals Ledger</h3>
               <p className="text-sm text-slate-500">
                 Audited doorway transitions and manual declarations for date {selectedDate}
               </p>
@@ -802,10 +802,10 @@ export default function BreaksDashboardPage() {
       {/* ============================================================== */}
       {activeTab === 'reconciliation' && (
         <div className="space-y-6">
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
-            <div className="flex items-center justify-between">
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 sm:p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="font-bold text-slate-900 text-lg">Mutually Exclusive Time Reconciliation</h3>
+                <h3 className="font-bold text-slate-900 text-base sm:text-lg">Mutually Exclusive Time Reconciliation</h3>
                 <p className="text-sm text-slate-500">
                   Zero double-counting verified for date: {selectedDate}
                 </p>
@@ -879,15 +879,15 @@ export default function BreaksDashboardPage() {
       {/* TAB 4: POLICY SETTINGS (CONFIGURED ALLOWANCES) */}
       {/* ============================================================== */}
       {activeTab === 'policies' && (
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-6">
-          <div className="flex items-center justify-between">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 sm:p-6 space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="font-bold text-slate-900 text-lg">Configured Break Allowances</h3>
+              <h3 className="font-bold text-slate-900 text-base sm:text-lg">Configured Break Allowances</h3>
               <p className="text-sm text-slate-500">
                 Customizable allowances for lunch, prayer, tea, outside departure, and personal pauses
               </p>
             </div>
-            <div className={`flex items-center gap-2.5 ${canManage ? '' : 'hidden'}`}>
+            <div className={`flex flex-wrap items-center gap-2.5 ${canManage ? '' : 'hidden'}`}>
               <button
                 onClick={handleRestoreDefaults}
                 disabled={actionLoading}
@@ -907,7 +907,7 @@ export default function BreaksDashboardPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {policies.map((p) => (
               <div
                 key={p.id}
@@ -973,7 +973,7 @@ export default function BreaksDashboardPage() {
       {/* ============================================================== */}
       {showDeclareModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-5">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-xl space-y-5">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold text-slate-900">Declare Authorized Break</h3>
               <button
@@ -1046,7 +1046,7 @@ export default function BreaksDashboardPage() {
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <div className="flex flex-wrap items-center justify-end gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setShowDeclareModal(false)}
@@ -1072,7 +1072,7 @@ export default function BreaksDashboardPage() {
       {/* ============================================================== */}
       {showCorrectModal && selectedInterval && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-5">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-xl space-y-5">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold text-slate-900">Administrator Interval Correction</h3>
               <button
@@ -1144,7 +1144,7 @@ export default function BreaksDashboardPage() {
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <div className="flex flex-wrap items-center justify-end gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setShowCorrectModal(false)}
@@ -1170,7 +1170,7 @@ export default function BreaksDashboardPage() {
       {/* ============================================================== */}
       {showPolicyModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-5">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-xl space-y-5">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold text-slate-900">
                 {editingPolicy ? 'Edit Break Policy' : 'New Break Policy'}
@@ -1268,7 +1268,7 @@ export default function BreaksDashboardPage() {
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <div className="flex flex-wrap items-center justify-end gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setShowPolicyModal(false)}
@@ -1294,7 +1294,7 @@ export default function BreaksDashboardPage() {
       {/* ============================================================== */}
       {showDeleteConfirmModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4">
             <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
               <Trash2 className="w-6 h-6" />
             </div>

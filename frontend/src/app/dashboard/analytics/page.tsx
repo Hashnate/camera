@@ -30,10 +30,10 @@ export default function AnalyticsPage() {
     <>
       <Header />
 
-      <main className="p-8 space-y-6">
-        <div className="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm space-y-2">
-          <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
-            <ShieldAlert className="w-4 h-4 text-blue-600" />
+      <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 space-y-4 sm:space-y-6 max-w-[1440px] mx-auto">
+        <div className="bg-white p-4 sm:p-6 rounded-xl border border-slate-200/80 shadow-sm space-y-2">
+          <div className="flex items-start gap-2 text-slate-800 font-bold text-sm">
+            <ShieldAlert className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
             <span>Privacy-Preserving Workplace Analytics Notice</span>
           </div>
           <p className="text-xs text-slate-500 max-w-3xl leading-relaxed">
@@ -42,7 +42,7 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Zones Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
           {(zones.length > 0
             ? zones
             : [
@@ -56,16 +56,16 @@ export default function AnalyticsPage() {
             const pct = Math.min(100, Math.round((count / (z.capacity || 1)) * 100));
 
             return (
-              <div key={z.id} className="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm space-y-4">
-                <div className="flex items-start justify-between">
-                  <div>
+              <div key={z.id} className="bg-white p-4 sm:p-6 rounded-xl border border-slate-200/80 shadow-sm space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
                     <span className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
                       {z.type || 'GENERAL'}
                     </span>
                     <h4 className="text-base font-bold text-slate-900 mt-0.5">{z.name}</h4>
                   </div>
 
-                  <span className="px-2.5 py-1 rounded-full text-xs font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                  <span className="shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
                     {count} / {z.capacity} Occupied
                   </span>
                 </div>
@@ -85,7 +85,7 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
 
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-slate-500">
                   <span>Capacity Limit: {z.capacity} persons</span>
                   <span className={pct > 85 ? 'text-rose-600 font-semibold' : 'text-emerald-600 font-semibold'}>
                     {pct > 85 ? 'Near Capacity' : 'Available Space'}

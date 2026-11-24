@@ -60,7 +60,7 @@ export function RealTimePresenceBoard() {
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
+      <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
         <div>
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200">
@@ -87,7 +87,7 @@ export function RealTimePresenceBoard() {
       </div>
 
       {/* Employee Cards Grid */}
-      <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="p-4 sm:p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {presenceList.map((emp) => {
           const isObserved = emp.status === 'OBSERVED_RECENTLY';
 
@@ -191,7 +191,7 @@ export function RealTimePresenceBoard() {
       </div>
 
       {/* Uncertainty Notice Footer */}
-      <div className="px-6 py-2.5 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-500 flex items-center gap-2">
+      <div className="px-4 sm:px-6 py-2.5 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-500 flex items-center gap-2">
         <AlertCircle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
         <span>
           <b>Uncertainty Principle:</b> &quot;Not in View&quot; does <b>not</b> mean you have left the office. It simply means you are in a camera blind spot or meeting room. Face observations never change your official paid hours.

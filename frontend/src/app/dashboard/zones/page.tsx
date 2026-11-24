@@ -494,11 +494,11 @@ export default function OfficeZonesPage() {
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <Header />
 
-      <main className="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
+      <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 max-w-7xl mx-auto w-full space-y-4 sm:space-y-6">
         {/* Title Bar */}
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
                 System A — Office Zones & Doorways
               </span>
@@ -507,7 +507,7 @@ export default function OfficeZonesPage() {
                 Live Camera Tracking
               </span>
             </div>
-            <h1 className="text-2xl font-bold text-slate-900 mt-1">
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mt-1">
               Office Zone Calibration & Doorway Monitoring
             </h1>
             <p className="text-sm text-slate-500">
@@ -515,7 +515,7 @@ export default function OfficeZonesPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <button
               onClick={() => selectedCameraId && loadSnapshot(selectedCameraId, selectedChannel)}
               disabled={snapshotLoading}
@@ -552,7 +552,7 @@ export default function OfficeZonesPage() {
         )}
 
         {/* Real-time Telemetry Metrics Bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-3.5">
           <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs">
             <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Detected People</p>
             <h4 className="text-xl font-bold text-slate-900 mt-1">{metrics.detectedPeople}</h4>
@@ -577,7 +577,7 @@ export default function OfficeZonesPage() {
             <p className="text-[10px] text-slate-400">Anonymous in transit</p>
           </div>
 
-          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs col-span-2 sm:col-span-1">
+          <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs col-span-2 sm:col-span-1 lg:col-span-1">
             <p className="text-[11px] font-semibold text-indigo-600 uppercase tracking-wider">Inference Speed</p>
             <h4 className="text-xl font-bold text-indigo-700 mt-1">
               {metrics.fps > 0 ? metrics.fps.toFixed(1) : '2.5'}{' '}
@@ -588,15 +588,15 @@ export default function OfficeZonesPage() {
         </div>
 
         {/* Layout Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
           {/* Main Visualizer (8 cols) */}
-          <div className="lg:col-span-8 space-y-6">
+          <div className="lg:col-span-8 space-y-4 sm:space-y-6 min-w-0">
             {/* Visual Canvas Card */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               {/* Toolbar */}
-              <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2">
+              <div className="p-3 sm:p-4 border-b border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
                     <span className="text-xs font-semibold text-slate-600">Camera Lens:</span>
                     <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-white text-xs font-semibold shadow-xs">
                       <button
@@ -607,7 +607,7 @@ export default function OfficeZonesPage() {
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        Channel 1 (Wide Lens — Tracking)
+                        Channel 1<span className="hidden sm:inline"> (Wide Lens — Tracking)</span>
                       </button>
                       <button
                         onClick={() => setSelectedChannel(2)}
@@ -617,7 +617,7 @@ export default function OfficeZonesPage() {
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        Channel 2 (Pan-Tilt — Workstation)
+                        Channel 2<span className="hidden sm:inline"> (Pan-Tilt — Workstation)</span>
                       </button>
                     </div>
                   </div>
@@ -642,7 +642,7 @@ export default function OfficeZonesPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
                   <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-700">
                     <input
                       type="checkbox"
@@ -707,7 +707,7 @@ export default function OfficeZonesPage() {
                 {snapshotTimestamp && (
                   <div className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur px-2.5 py-1 rounded-md text-[10px] font-mono text-slate-300 border border-slate-700 z-20 flex items-center gap-1.5 pointer-events-none">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span>Frame Synced: {new Date(snapshotTimestamp).toLocaleTimeString()}</span>
+                    <span><span className="hidden sm:inline">Frame Synced: </span>{new Date(snapshotTimestamp).toLocaleTimeString()}</span>
                   </div>
                 )}
                 {snapshotUrl ? (
@@ -742,9 +742,9 @@ export default function OfficeZonesPage() {
               </div>
 
               {/* Visual Legend */}
-              <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex flex-col gap-2.5 text-xs">
+              <div className="px-4 sm:px-5 py-3 bg-slate-50 border-t border-slate-100 flex flex-col gap-2.5 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                     <span className="font-semibold text-slate-600">Doorway Boundaries:</span>
                     <div className="flex items-center gap-1.5 font-medium text-slate-700">
                       <span className="w-3 h-1 bg-amber-500 rounded" />
@@ -769,7 +769,7 @@ export default function OfficeZonesPage() {
                   </button>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-200/60">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-2 border-t border-slate-200/60">
                   <span className="font-semibold text-slate-600">v2.9 Identity Tracking:</span>
                   <div className="flex items-center gap-1.5 font-medium text-slate-700">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
@@ -797,8 +797,8 @@ export default function OfficeZonesPage() {
 
             {/* Calibration Coordinates Table */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                <div className="flex items-center gap-2">
+              <div className="p-3 sm:p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 bg-slate-50/50">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={() => setActiveTab('lines')}
                     className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
@@ -825,7 +825,7 @@ export default function OfficeZonesPage() {
 
               {activeTab === 'lines' ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
+                  <table className="w-full text-left text-xs whitespace-nowrap">
                     <thead className="bg-slate-50/80 text-slate-500 font-semibold border-b border-slate-100">
                       <tr>
                         <th className="py-2.5 px-4">Doorway Line</th>
@@ -923,7 +923,7 @@ export default function OfficeZonesPage() {
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
+                  <table className="w-full text-left text-xs whitespace-nowrap">
                     <thead className="bg-slate-50/80 text-slate-500 font-semibold border-b border-slate-100">
                       <tr>
                         <th className="py-2.5 px-4">Zone Name</th>
@@ -955,10 +955,10 @@ export default function OfficeZonesPage() {
           </div>
 
           {/* Right Column: Live Telemetry & Movement Timeline (4 cols) */}
-          <div className="lg:col-span-4 space-y-6">
+          <div className="lg:col-span-4 space-y-4 sm:space-y-6 min-w-0">
             {/* Active Tracks Card */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="px-4 sm:px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-2 bg-slate-50/50">
                 <div className="flex items-center gap-2">
                   <Activity className="w-4 h-4 text-emerald-600" />
                   <h3 className="text-sm font-bold text-slate-900">Active Camera Tracks</h3>
@@ -1000,7 +1000,7 @@ export default function OfficeZonesPage() {
                               </span>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1 text-[11px] text-slate-500">
                             <span className="font-mono">Track #{t.trackId}</span>
                             <span>•</span>
                             <span className="font-medium text-blue-600">{t.currentZoneId}</span>
@@ -1027,7 +1027,7 @@ export default function OfficeZonesPage() {
 
             {/* Doorway Movement Activity Timeline */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-              <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="px-4 sm:px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 bg-slate-50/50">
                 <div className="flex items-center gap-2">
                   <MoveRight className="w-4 h-4 text-blue-600" />
                   <h3 className="text-sm font-bold text-slate-900">Doorway Activity Stream</h3>

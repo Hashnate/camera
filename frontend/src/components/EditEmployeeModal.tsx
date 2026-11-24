@@ -95,7 +95,7 @@ export function EditEmployeeModal({ employee, onClose, onUpdated }: EditEmployee
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+        <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-slate-50/70">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs">
               <UserCheck className="w-4 h-4" />
@@ -118,7 +118,7 @@ export function EditEmployeeModal({ employee, onClose, onUpdated }: EditEmployee
         </div>
 
         {/* Form Body */}
-        <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+        <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
           <label className="space-y-1">
             <span className="font-semibold text-slate-700">Full Name *</span>
             <input
@@ -250,7 +250,7 @@ export function EditEmployeeModal({ employee, onClose, onUpdated }: EditEmployee
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-2.5 bg-slate-50/50">
+        <div className="px-4 sm:px-6 py-4 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2.5 bg-slate-50/50">
           <button
             type="button"
             onClick={onClose}

@@ -201,8 +201,8 @@ export function VideoPlayer({
       className="bg-slate-950 rounded-xl overflow-hidden border border-slate-800 shadow-xl flex flex-col relative group"
     >
       {/* Player Header Bar */}
-      <div className="bg-slate-900/90 backdrop-blur px-4 py-3 flex items-center justify-between border-b border-slate-800 text-white z-10">
-        <div className="flex items-center gap-3">
+      <div className="bg-slate-900/90 backdrop-blur px-3 sm:px-4 py-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 text-white z-10">
+        <div className="flex items-center gap-3 min-w-0">
           <span className="relative flex h-2.5 w-2.5">
             {status === 'playing' ? (
               <>
@@ -215,10 +215,10 @@ export function VideoPlayer({
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
             )}
           </span>
-          <div>
-            <h3 className="text-sm font-semibold tracking-tight text-white flex items-center gap-2">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold tracking-tight text-white flex flex-wrap items-center gap-x-2 gap-y-1">
               {cameraName}
-              <span className="text-[11px] font-normal text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+              <span className="hidden sm:inline text-[11px] font-normal text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
                 S/N: {serialNumber}
               </span>
             </h3>
@@ -227,7 +227,7 @@ export function VideoPlayer({
 
         {/* Dual Lens Channel Switcher */}
         <div className="flex items-center gap-1.5 bg-slate-950/70 p-1 rounded-lg border border-slate-800">
-          <Layers className="w-3.5 h-3.5 text-slate-400 ml-1.5 mr-1" />
+          <Layers className="hidden sm:block w-3.5 h-3.5 text-slate-400 ml-1.5 mr-1" />
           {channels.map((ch) => (
             <button
               key={ch.channelNo}
@@ -238,7 +238,7 @@ export function VideoPlayer({
                   : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}
             >
-              Ch {ch.channelNo}: {ch.channelNo === 1 ? 'Wide Lens' : 'Pan-Tilt'}
+              Ch {ch.channelNo}<span className="hidden sm:inline">: {ch.channelNo === 1 ? 'Wide Lens' : 'Pan-Tilt'}</span>
             </button>
           ))}
         </div>
@@ -280,8 +280,8 @@ export function VideoPlayer({
         )}
 
         {/* Bottom Video Controls Overlay (Fade in on hover) */}
-        <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-slate-950/90 via-slate-950/50 to-transparent p-4 flex items-center justify-between text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-          <div className="flex items-center gap-3">
+        <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-slate-950/90 via-slate-950/50 to-transparent p-2.5 sm:p-4 flex items-center justify-between gap-2 text-white opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity duration-200 z-10">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
               onClick={togglePlay}
               className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
@@ -306,7 +306,7 @@ export function VideoPlayer({
               {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
 
-            <span className="text-xs font-mono text-emerald-400 flex items-center gap-1.5 ml-2">
+            <span className="hidden sm:flex text-xs font-mono text-emerald-400 items-center gap-1.5 ml-2">
               <span className="w-2 h-2 rounded-full bg-emerald-500"></span> LIVE
             </span>
           </div>
@@ -315,11 +315,12 @@ export function VideoPlayer({
             <button
               onClick={handleCaptureSnapshot}
               disabled={isCapturing}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium transition-colors"
+              className="flex items-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium transition-colors"
               title="Capture instantaneous frame"
+              aria-label="Snapshot"
             >
               <Camera className="w-3.5 h-3.5" />
-              <span>{isCapturing ? 'Capturing...' : 'Snapshot'}</span>
+              <span className="hidden sm:inline">{isCapturing ? 'Capturing...' : 'Snapshot'}</span>
             </button>
 
             <button
@@ -351,14 +352,14 @@ export function VideoPlayer({
           <p><span className="text-slate-500">Protocol:</span> HLS (HTTP Live Streaming - m3u8)</p>
           <p><span className="text-slate-500">Target Channel:</span> Channel {activeChannel} ({channels.find(c => c.channelNo === activeChannel)?.channelName})</p>
           <p><span className="text-slate-500">Stream Expiration:</span> {streamInfo?.expireTime || 'Permanent / Session Valid'}</p>
-          <p className="truncate"><span className="text-slate-500">Authorized Endpoint:</span> {streamInfo?.url || 'N/A'}</p>
+          <p className="break-all sm:truncate"><span className="text-slate-500">Authorized Endpoint:</span> {streamInfo?.url || 'N/A'}</p>
         </div>
       )}
 
       {/* Instant Snapshot Preview Modal / Banner */}
       {snapshotPreview && (
-        <div className="p-4 bg-slate-900 border-t border-slate-800 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        <div className="p-4 bg-slate-900 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+          <div className="flex items-center gap-3 min-w-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={snapshotPreview}

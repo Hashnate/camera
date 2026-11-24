@@ -93,7 +93,7 @@ export default function MyTimePage() {
         {error && <Notice tone="error">{error}</Notice>}
 
         {loading && !data ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
             {[0, 1, 2, 3].map((i) => (
               <Skeleton key={i} className="h-28 rounded-2xl" />
             ))}
@@ -102,7 +102,7 @@ export default function MyTimePage() {
           data &&
           day && (
             <>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
                 <StatTile label="Status" value={<PresenceBadge tone={state}>{stateText}</PresenceBadge>} sub={day.isLate ? 'Arrived late' : day.date ? 'On time' : ' '} />
                 <StatTile label="Arrived" icon={LogIn} value={day.date ? fmtTime(day.firstSeen ?? day.checkIn) : '—'} sub={day.lastSeen ? `Last seen ${fmtTime(day.lastSeen)}` : undefined} />
                 <StatTile label="Time inside" icon={Clock} value={day.date ? fmtDur(day.insideSeconds) : '—'} sub={day.scheduledMinutes ? `Schedule ${fmtMin(day.scheduledMinutes)}` : undefined} />
@@ -117,12 +117,12 @@ export default function MyTimePage() {
               {day.date && (day.sessions.length > 0 || day.awayPeriods.length > 0) && (
                 <Card>
                   <CardHeader title="The day" description={`Not being seen by a camera for more than ${data.awayAfterMin} minutes counts as away.`} />
-                  <ol className="px-5 pb-5 space-y-2">
+                  <ol className="px-4 sm:px-5 pb-5 space-y-2">
                     {day.sessions.flatMap((s, i) => {
                       const rows = [
-                        <li key={`s${i}`} className="flex items-center gap-3 text-[13px]">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" aria-hidden="true" />
-                          <span className="tabular-nums text-slate-900 w-36 shrink-0">
+                        <li key={`s${i}`} className="flex items-start sm:items-center gap-2.5 sm:gap-3 text-[13px]">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 mt-1.5 sm:mt-0" aria-hidden="true" />
+                          <span className="tabular-nums text-slate-900 w-32 sm:w-36 shrink-0">
                             {fmtTime(s.start)} – {fmtTime(s.end)}
                           </span>
                           <span className="text-slate-600">In the office · {fmtDur(s.seconds)}</span>
@@ -131,9 +131,9 @@ export default function MyTimePage() {
                       const away = day.awayPeriods[i];
                       if (away)
                         rows.push(
-                          <li key={`a${i}`} className="flex items-center gap-3 text-[13px]">
-                            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" aria-hidden="true" />
-                            <span className="tabular-nums text-slate-900 w-36 shrink-0">
+                          <li key={`a${i}`} className="flex items-start sm:items-center gap-2.5 sm:gap-3 text-[13px]">
+                            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 mt-1.5 sm:mt-0" aria-hidden="true" />
+                            <span className="tabular-nums text-slate-900 w-32 sm:w-36 shrink-0">
                               {fmtTime(away.start)} – {fmtTime(away.end)}
                             </span>
                             <span className="text-slate-600">Away · {fmtDur(away.seconds)}</span>
@@ -156,10 +156,10 @@ export default function MyTimePage() {
                   <table className="w-full text-[13px]">
                     <thead>
                       <tr className="text-left text-[12px] text-slate-500 border-y border-slate-100 bg-slate-50/60">
-                        <th className="font-medium py-2.5 pl-5 pr-3">Day</th>
+                        <th className="font-medium py-2.5 pl-4 sm:pl-5 pr-3">Day</th>
                         <th className="font-medium py-2.5 px-3">Arrived</th>
                         <th className="font-medium py-2.5 px-3 hidden sm:table-cell">Last seen</th>
-                        <th className="font-medium py-2.5 px-3 text-right">Inside</th>
+                        <th className="font-medium py-2.5 pl-3 pr-4 sm:px-3 text-right">Inside</th>
                         <th className="font-medium py-2.5 pl-3 pr-5 text-right hidden sm:table-cell">Away</th>
                       </tr>
                     </thead>
@@ -170,7 +170,7 @@ export default function MyTimePage() {
                           className={`cursor-pointer hover:bg-slate-50 ${h.date === data.date ? 'bg-blue-50/40' : ''} ${h.present ? '' : 'text-slate-400'}`}
                           onClick={() => setDate(h.date === data.today ? null : h.date)}
                         >
-                          <td className="py-2.5 pl-5 pr-3 whitespace-nowrap">
+                          <td className="py-2.5 pl-4 sm:pl-5 pr-3 whitespace-nowrap">
                             <span className="inline-flex items-center gap-2">
                               <CalendarDays className="w-3.5 h-3.5 text-slate-400" />
                               {fmtDate(h.date, { weekday: 'short', day: 'numeric', month: 'short' })}
@@ -179,7 +179,7 @@ export default function MyTimePage() {
                           </td>
                           <td className="py-2.5 px-3 tabular-nums">{h.present ? fmtTime(h.firstSeen) : 'Not in'}</td>
                           <td className="py-2.5 px-3 tabular-nums hidden sm:table-cell">{h.present ? fmtTime(h.lastSeen) : ''}</td>
-                          <td className="py-2.5 px-3 tabular-nums text-right">{h.present ? fmtMin(h.insideMinutes) : '—'}</td>
+                          <td className="py-2.5 pl-3 pr-4 sm:px-3 tabular-nums text-right">{h.present ? fmtMin(h.insideMinutes) : '—'}</td>
                           <td className="py-2.5 pl-3 pr-5 tabular-nums text-right hidden sm:table-cell">{h.present ? fmtMin(h.awayMinutes) : '—'}</td>
                         </tr>
                       ))}

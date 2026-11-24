@@ -16,9 +16,11 @@ import {
   RefreshCw,
   Sparkles,
   Lock,
+  ScanFace,
 } from 'lucide-react';
 import { api, FaceEnrollmentSummary } from '@/lib/api';
 import { MobileEnrollQR } from '@/components/MobileEnrollQR';
+import { CameraScanEnroll } from '@/components/CameraScanEnroll';
 
 interface Props {
   employee: { id: string; fullName: string; employeeCode: string };
@@ -122,6 +124,7 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
   const [isCapturing, setIsCapturing] = useState(false);
   const [consent, setConsent] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -483,7 +486,7 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200"
       // Close only on a click that is on the dark backdrop itself (never on anything inside the dialog,
       // e.g. the hidden file input the Upload buttons trigger, which used to close the dialog).
       onClick={(e) => {
@@ -503,14 +506,14 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
           onChange={handleFileSelected}
         />
         {/* Modal Header */}
-        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 to-white">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center font-bold">
+        <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-100 flex items-start sm:items-center justify-between gap-3 bg-gradient-to-r from-slate-50 to-white">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="hidden sm:flex shrink-0 w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 items-center justify-center font-bold">
               <Camera className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-slate-900">Multi-Angle Face Biometric Enrollment</h3>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h3 className="text-[15px] sm:text-base font-bold text-slate-900">Multi-Angle Face Biometric Enrollment</h3>
                 {isCurrentlyEnrolled ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                     <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Enrolled ({samples} active)
@@ -527,10 +530,10 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             {/* Progress Pill */}
             <span
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
+              className={`hidden md:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
                 allRequiredCaptured
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : 'bg-amber-50 text-amber-700 border-amber-200'
@@ -556,12 +559,12 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-6">
+        <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
           {/* Current Biometric Status & Revoke Banner */}
           {isCurrentlyEnrolled && (
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 text-slate-700">
-                <Lock className="w-4 h-4 text-emerald-600" />
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-start gap-2 text-slate-700 min-w-0">
+                <Lock className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>
                   Currently secured with <b>{samples}</b> active AES-256-GCM face templates (OpenCV YuNet + SFace).
                 </span>
@@ -575,6 +578,40 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
                 <Trash2 className="w-3.5 h-3.5" /> Revoke & Delete Data
               </button>
             </div>
+          )}
+
+          {/* Recommended: samples from the office camera itself (live scan, full views only) */}
+          <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <ScanFace className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900">
+                  Scan from office camera <span className="ml-1 text-[10px] font-bold uppercase text-blue-700 bg-blue-100 rounded px-1.5 py-0.5">Recommended</span>
+                </p>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  Captures {employee.fullName.split(' ')[0]}&apos;s face as the office camera sees it, only when it&apos;s a full, clear view. Best for reliable
+                  recognition at their desk.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setScanOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shrink-0"
+            >
+              <ScanFace className="w-4 h-4" /> Start scanning
+            </button>
+          </div>
+          {scanOpen && (
+            <CameraScanEnroll
+              employee={employee}
+              onClose={() => setScanOpen(false)}
+              onSaved={(message) => {
+                setScanOpen(false);
+                onChanged();
+                setMessage({ ok: true, text: message });
+              }}
+            />
           )}
 
           {/* Photos taken on the employee's own phone via one-time QR link (loaded here, saved only by HR) */}
@@ -652,7 +689,7 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
                   </button>
                 </div>
               ) : (
-                <div className="relative aspect-video max-h-72 bg-black rounded-xl overflow-hidden flex items-center justify-center">
+                <div className="relative aspect-[3/4] sm:aspect-video max-h-[60vh] sm:max-h-72 bg-black rounded-xl overflow-hidden flex items-center justify-center">
                   <video
                     ref={videoRef}
                     autoPlay
@@ -688,7 +725,7 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
               )}
 
               {/* Camera Controls */}
-              <div className="flex items-center justify-between pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => handleTriggerUpload(activeWebcamAngle)}
@@ -925,7 +962,7 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
           )}
 
           {/* Modal Action Buttons */}
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-3">
+          <div className="pt-2 border-t border-slate-100 flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:gap-3">
             <button
               type="button"
               onClick={onClose}
@@ -939,7 +976,7 @@ export function FaceEnrollModal({ employee, enrollment, maxSamples, onClose, onC
               type="button"
               disabled={busy || approvedKeys.length === 0}
               onClick={handleSaveAndEnroll}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
               {busy ? (
                 <>

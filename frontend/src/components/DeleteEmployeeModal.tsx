@@ -45,11 +45,11 @@ export function DeleteEmployeeModal({ employee, onClose, onDeleted }: DeleteEmpl
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200"
+        className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[92vh] overflow-y-auto border border-slate-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-rose-50/50">
+        <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-rose-50/50">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center font-bold">
               <AlertTriangle className="w-4 h-4" />
@@ -70,7 +70,7 @@ export function DeleteEmployeeModal({ employee, onClose, onDeleted }: DeleteEmpl
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-4 text-xs">
+        <div className="p-4 sm:p-6 space-y-4 text-xs">
           <div className="p-3 bg-slate-50 border border-slate-200/70 rounded-lg flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-slate-200 text-slate-700 font-bold flex items-center justify-center text-sm shrink-0">
               {employee.fullName.substring(0, 2).toUpperCase()}
@@ -145,7 +145,7 @@ export function DeleteEmployeeModal({ employee, onClose, onDeleted }: DeleteEmpl
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-2.5 bg-slate-50/50">
+        <div className="px-4 sm:px-6 py-4 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2.5 bg-slate-50/50">
           <button
             type="button"
             onClick={onClose}

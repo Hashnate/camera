@@ -631,7 +631,7 @@ export default function SettingsPage() {
       </main>
 
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-sm" role="status">
+        <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:bottom-5 sm:right-5 z-50 sm:max-w-sm" role="status">
           <div
             className={`flex items-center gap-2.5 rounded-xl px-4 py-3 text-[13px] shadow-lg ring-1 ${
               toast.type === 'success' ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-rose-800 ring-rose-200'

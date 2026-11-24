@@ -428,11 +428,6 @@ export default function UsersPage() {
         }
       />
       <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 space-y-4 max-w-[1440px] w-full mx-auto">
-        <div className="md:hidden">
-          <button type="button" className={`${btn.primary} w-full`} onClick={() => setEditing('new')}>
-            <Plus className="w-4 h-4" /> Add user
-          </button>
-        </div>
         {error && <Notice tone="error">{error}</Notice>}
 
         <Card>
@@ -449,12 +444,12 @@ export default function UsersPage() {
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="text-left text-[12px] text-slate-500 border-y border-slate-100 bg-slate-50/60">
-                    <th className="font-medium py-2.5 pl-5 pr-3">Person</th>
-                    <th className="font-medium py-2.5 px-3">Access</th>
+                    <th className="font-medium py-2.5 pl-4 sm:pl-5 pr-3">Person</th>
+                    <th className="font-medium py-2.5 px-3 hidden sm:table-cell">Access</th>
                     <th className="font-medium py-2.5 px-3 hidden md:table-cell">Employee record</th>
                     <th className="font-medium py-2.5 px-3">Status</th>
                     <th className="font-medium py-2.5 px-3 hidden sm:table-cell">Last sign-in</th>
-                    <th className="py-2.5 pl-3 pr-5">
+                    <th className="py-2.5 pl-3 pr-4 sm:pr-5">
                       <span className="sr-only">Actions</span>
                     </th>
                   </tr>
@@ -464,19 +459,22 @@ export default function UsersPage() {
                     const st = statusOf(u);
                     return (
                       <tr key={u.id} className={u.isActive ? '' : 'text-slate-400'}>
-                        <td className="py-3 pl-5 pr-3">
+                        <td className="py-3 pl-4 sm:pl-5 pr-3">
                           <div className="flex items-center gap-3 min-w-0">
                             <Avatar name={u.fullName} id={u.id} size="sm" />
                             <div className="min-w-0">
-                              <p className="font-medium text-slate-900 truncate">
+                              <p className="font-medium text-slate-900 sm:truncate">
                                 {u.fullName}
                                 {u.isYou && <span className="ml-1.5 text-[11.5px] font-normal text-slate-400">(you)</span>}
                               </p>
-                              <p className="text-[12px] text-slate-500 truncate">{u.email}</p>
+                              <p className="text-[12px] text-slate-500 break-all sm:break-normal sm:truncate">{u.email}</p>
+                              <p className="sm:hidden mt-1">
+                                <Tag tone={u.role === 'SUPER_ADMIN' || u.role === 'OFFICE_ADMIN' ? 'blue' : u.role === 'EMPLOYEE' ? 'slate' : 'emerald'}>{u.roleLabel}</Tag>
+                              </p>
                             </div>
                           </div>
                         </td>
-                        <td className="py-3 px-3">
+                        <td className="py-3 px-3 hidden sm:table-cell">
                           <Tag tone={u.role === 'SUPER_ADMIN' || u.role === 'OFFICE_ADMIN' ? 'blue' : u.role === 'EMPLOYEE' ? 'slate' : 'emerald'}>{u.roleLabel}</Tag>
                         </td>
                         <td className="py-3 px-3 hidden md:table-cell text-slate-600">{u.employee ? u.employee.fullName : <span className="text-slate-400">—</span>}</td>
@@ -486,8 +484,8 @@ export default function UsersPage() {
                           </span>
                         </td>
                         <td className="py-3 px-3 hidden sm:table-cell text-slate-500 whitespace-nowrap">{u.lastLoginAt ? timeAgo(u.lastLoginAt, now) : 'Never'}</td>
-                        <td className="py-3 pl-3 pr-5 text-right">
-                          <button type="button" className={btn.secondary} onClick={() => setEditing(u)} aria-label={`Edit ${u.fullName}`}>
+                        <td className="py-3 pl-3 pr-4 sm:pr-5 text-right">
+                          <button type="button" className={`${btn.secondary} max-lg:!px-2.5`} onClick={() => setEditing(u)} aria-label={`Edit ${u.fullName}`}>
                             <Pencil className="w-4 h-4" /> <span className="hidden lg:inline">{u.canEdit ? 'Edit' : 'View'}</span>
                           </button>
                         </td>
@@ -507,7 +505,7 @@ export default function UsersPage() {
               <table className="w-full text-[12.5px]">
                 <thead>
                   <tr className="text-left text-slate-500 border-y border-slate-100 bg-slate-50/60">
-                    <th className="font-medium py-2.5 pl-5 pr-3">Level</th>
+                    <th className="font-medium py-2.5 pl-4 sm:pl-5 pr-3">Level</th>
                     {PERM_COLUMNS.map((c) => (
                       <th key={c.perm} className="font-medium py-2.5 px-2 text-center whitespace-nowrap">
                         {c.label}
@@ -518,7 +516,7 @@ export default function UsersPage() {
                 <tbody className="divide-y divide-slate-100">
                   {roles.map((r) => (
                     <tr key={r.value}>
-                      <td className="py-2.5 pl-5 pr-3 min-w-[16rem]">
+                      <td className="py-2.5 pl-4 sm:pl-5 pr-3 min-w-[12rem] sm:min-w-[16rem]">
                         <p className="font-medium text-slate-900">
                           {r.label}
                           <span className="ml-1.5 font-normal text-slate-400">{counts[r.value] ? `${counts[r.value]} user${counts[r.value] === 1 ? '' : 's'}` : ''}</span>
@@ -543,7 +541,7 @@ export default function UsersPage() {
 
           <Card>
             <CardHeader title="Recent account changes" />
-            <ul className="px-5 pb-5 space-y-3">
+            <ul className="px-4 sm:px-5 pb-5 space-y-3">
               {activity === null ? (
                 <Skeleton className="h-16 w-full" />
               ) : activity.length === 0 ? (
@@ -609,7 +607,7 @@ export default function UsersPage() {
       )}
 
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-sm" role="status">
+        <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:bottom-5 sm:right-5 z-50 sm:max-w-sm" role="status">
           <div className="flex items-center gap-2.5 rounded-xl px-4 py-3 text-[13px] shadow-lg ring-1 bg-slate-900 text-white ring-slate-900">
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>{toast}</span>

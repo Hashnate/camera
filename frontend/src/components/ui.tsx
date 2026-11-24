@@ -35,7 +35,7 @@ export function CardHeader({
   className?: string;
 }) {
   return (
-    <div className={`flex items-start justify-between gap-3 px-5 pt-4 pb-3 ${className}`}>
+    <div className={`flex items-start justify-between gap-3 px-4 sm:px-5 pt-4 pb-3 ${className}`}>
       <div className="min-w-0">
         <h2 className="text-[14px] font-semibold text-slate-900">{title}</h2>
         {description && <p className="text-[12.5px] text-slate-500 mt-0.5">{description}</p>}
@@ -68,12 +68,12 @@ export function StatTile({
   className?: string;
 }) {
   return (
-    <Card className={`p-5 ${className}`}>
-      <div className="flex items-center justify-between">
-        <p className="text-[13px] font-medium text-slate-500">{label}</p>
-        {Icon && <Icon className="w-4 h-4 text-slate-400" />}
+    <Card className={`p-4 sm:p-5 min-w-0 ${className}`}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[12.5px] sm:text-[13px] font-medium text-slate-500">{label}</p>
+        {Icon && <Icon className="w-4 h-4 text-slate-400 shrink-0" />}
       </div>
-      <p className="mt-2 text-[28px] leading-none font-semibold tracking-tight text-slate-900">{value}</p>
+      <p className="mt-2 text-[24px] sm:text-[28px] leading-none font-semibold tracking-tight text-slate-900">{value}</p>
       {sub && <p className="mt-2 text-[12.5px] text-slate-500">{sub}</p>}
     </Card>
   );

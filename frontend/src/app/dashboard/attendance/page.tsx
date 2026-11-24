@@ -88,7 +88,7 @@ export default function AttendancePage() {
         </div>
 
         {mySession?.employee && (
-          <Card className="p-5">
+          <Card className="p-4 sm:p-5">
             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <Avatar name={mySession.employee.fullName} id={mySession.employee.id} />
@@ -126,10 +126,11 @@ export default function AttendancePage() {
           ) : records.length === 0 ? (
             <EmptyState icon={CalendarCheck} title="No one has checked in yet" description="Arrivals appear here as soon as a camera recognises someone, or when they check in by hand." />
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-left text-[13px]">
               <thead className="bg-slate-50/70 border-y border-slate-100 text-[11.5px] text-slate-500">
                 <tr>
-                  <th className="py-2.5 px-5 font-medium">Employee</th>
+                  <th className="py-2.5 pl-4 pr-3 sm:px-5 font-medium">Employee</th>
                   <th className="py-2.5 px-3 font-medium">Arrived</th>
                   <th className="py-2.5 px-3 font-medium hidden sm:table-cell">Left / last seen</th>
                   <th className="py-2.5 px-3 font-medium hidden md:table-cell text-right">Span</th>
@@ -140,12 +141,12 @@ export default function AttendancePage() {
               <tbody className="divide-y divide-slate-100">
                 {records.map((rec) => (
                   <tr key={rec.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="py-3 px-5">
+                    <td className="py-3 pl-4 pr-3 sm:px-5">
                       <div className="flex items-center gap-3 min-w-0">
                         <Avatar name={rec.employee?.fullName ?? '?'} id={rec.employee?.id} />
                         <div className="min-w-0">
-                          <p className="font-medium text-slate-900 truncate">{rec.employee?.fullName ?? 'Unknown'}</p>
-                          <p className="text-[12px] text-slate-500 truncate">{rec.employee?.department?.name ?? rec.employee?.employeeCode ?? ''}</p>
+                          <p className="font-medium text-slate-900 sm:truncate">{rec.employee?.fullName ?? 'Unknown'}</p>
+                          <p className="text-[12px] text-slate-500 sm:truncate">{rec.employee?.department?.name ?? rec.employee?.employeeCode ?? ''}</p>
                         </div>
                       </div>
                     </td>
@@ -163,13 +164,14 @@ export default function AttendancePage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </Card>
 
         {employees && absent.length > 0 && (
           <Card>
             <CardHeader title="Not in today" description={`${absent.length} of ${employees.length} employees haven’t been seen`} />
-            <ul className="px-5 pb-5 flex flex-wrap gap-2">
+            <ul className="px-4 sm:px-5 pb-5 flex flex-wrap gap-2">
               {absent.map((e) => (
                 <li key={e.id} className="inline-flex items-center gap-2 h-9 pl-1 pr-3 rounded-full bg-slate-50 ring-1 ring-inset ring-slate-200">
                   <Avatar size="sm" name={e.fullName} id={e.id} />
