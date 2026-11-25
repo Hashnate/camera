@@ -51,6 +51,7 @@ class LatestFrameCapture(FrameSource):
         self._cap = self._open(target)
         if not self._cap.isOpened():
             self.failed = True
+            self._cap.release()
             raise RuntimeError(f"Could not open video source ({kind})")
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -60,6 +61,15 @@ class LatestFrameCapture(FrameSource):
         return cv2.VideoCapture(target, cv2.CAP_FFMPEG) if isinstance(target, str) else cv2.VideoCapture(target)
 
     def _loop(self) -> None:
+        # Only this thread touches the capture, and it releases it on the way out. Releasing it from another thread
+        # while read() is decoding frees FFmpeg's decoder under it ("double free or corruption"), which killed the
+        # whole AI service at every stream URL refresh (~30 min) and wiped everyone's tracked identity.
+        try:
+            self._read_frames()
+        finally:
+            self._cap.release()
+
+    def _read_frames(self) -> None:
         misses = 0
         while not self._stop.is_set():
             try:
@@ -103,8 +113,11 @@ class LatestFrameCapture(FrameSource):
             return self._queue.popleft()
 
     def close(self) -> None:
+        """Stop reading; the reader thread releases the capture (see _loop). If a read is stuck on the network,
+        don't wait for it: the thread finishes and releases on its own once the read returns."""
         self._stop.set()
-        self._cap.release()
+        if self._thread is not threading.current_thread():
+            self._thread.join(timeout=5.0)
 
 
 class HLSSource(LatestFrameCapture):
