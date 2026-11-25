@@ -14,6 +14,7 @@ class C {
   static const card = Colors.white;
 
   static const accent = Color(0xFFFF6600); // Hashnate orange: graphics, rings, highlights
+  static const inside = Color(0xFF10B981); // time inside on timelines (the website's green: easy to read)
   static const accentText = Color(0xFFC2410C); // orange that is readable as small text on white
 
   static const blue = ink;
