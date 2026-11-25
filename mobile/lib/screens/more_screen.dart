@@ -4,7 +4,7 @@ import '../session.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
-const appVersion = '0.1.0';
+const appVersion = '1.0.0';
 
 /// Account, server, and sign out. Setup (cameras, people, settings) stays on the website.
 class MoreScreen extends StatelessWidget {

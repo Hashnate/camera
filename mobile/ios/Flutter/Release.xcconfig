@@ -1,1 +1,4 @@
 #include "Generated.xcconfig"
+// Written by the TestFlight workflow (.github/workflows/ios-testflight.yml) for manual
+// App Store signing; absent locally, so Xcode keeps automatic signing on a Mac.
+#include? "CodeSigning.xcconfig"

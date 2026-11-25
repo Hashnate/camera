@@ -32,3 +32,6 @@ Runner/GeneratedPluginRegistrant.*
 !default.mode2v3
 !default.pbxuser
 !default.perspectivev3
+
+# Written by the TestFlight workflow, never committed
+Flutter/CodeSigning.xcconfig
