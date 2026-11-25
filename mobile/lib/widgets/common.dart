@@ -5,8 +5,8 @@ import '../format.dart';
 import '../theme.dart';
 import 'shimmer.dart';
 
-/// Space a tab's scrolling content leaves at the bottom so its last item can scroll clear of the floating tab bar.
-const double kNavClearance = 112;
+/// Space at the bottom of a tab's scrolling content (the tab bar sits below the content, not over it).
+const double kNavClearance = 28;
 
 /// White rounded card with a soft shadow.
 class Panel extends StatelessWidget {

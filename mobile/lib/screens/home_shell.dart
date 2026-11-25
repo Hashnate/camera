@@ -48,27 +48,24 @@ class _HomeShellState extends State<HomeShell> {
     final index = _index.clamp(0, tabs.length - 1);
 
     return Scaffold(
-      extendBody: true,
       // Hidden tabs stay built (they keep their place) but don't animate: no shimmer or ripples off screen.
       body: IndexedStack(index: index, children: [
         for (var i = 0; i < tabs.length; i++) TickerMode(enabled: i == index, child: tabs[i].screen),
       ]),
-      bottomNavigationBar: SafeArea(
-        top: false,
-        minimum: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-        child: Container(
-          height: 68,
-          decoration: BoxDecoration(
-            color: C.ink,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: const [BoxShadow(color: Color(0x2E000000), blurRadius: 30, offset: Offset(0, 10))],
+      // Black bar fixed to the bottom edge, square corners; the screens end above it.
+      bottomNavigationBar: ColoredBox(
+        color: C.ink,
+        child: SafeArea(
+          top: false,
+          child: SizedBox(
+            height: 62,
+            child: Row(children: [
+              for (var i = 0; i < tabs.length; i++)
+                Expanded(
+                  child: _NavItem(tab: tabs[i], selected: i == index, onTap: () => setState(() => _index = i)),
+                ),
+            ]),
           ),
-          child: Row(children: [
-            for (var i = 0; i < tabs.length; i++)
-              Expanded(
-                child: _NavItem(tab: tabs[i], selected: i == index, onTap: () => setState(() => _index = i)),
-              ),
-          ]),
         ),
       ),
     );
@@ -93,6 +90,14 @@ class _NavItem extends StatelessWidget {
         highlightColor: Colors.transparent,
         splashColor: Colors.white24,
         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          // Orange line along the top edge over the open tab.
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            width: 26,
+            height: 3,
+            color: selected ? C.accent : Colors.transparent,
+          ),
+          const Spacer(),
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 180),
             child: Icon(selected ? tab.selectedIcon : tab.icon,
@@ -108,6 +113,7 @@ class _NavItem extends StatelessWidget {
                 fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                 color: selected ? Colors.white : idle),
           ),
+          const Spacer(),
         ]),
       ),
     );
