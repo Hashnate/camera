@@ -9,6 +9,7 @@ import '../session.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/shimmer.dart';
+import '../widgets/sightings_section.dart';
 import '../widgets/timeline.dart';
 
 /// One person's day: timeline, arrival, time inside and away, and every face sighting.
@@ -277,8 +278,17 @@ class _PersonDayScreenState extends State<PersonDayScreen> {
                 ]),
         ),
         const SizedBox(height: 8),
-        SectionTitle('Face sightings', subtitle: '${row.sightings} on this day · newest first'),
-        _SightingsList(sightings: _sightings, awayAfterMinutes: d.awayAfterMinutes),
+        SightingsSection(
+          sightings: _sightings,
+          total: row.sightings,
+          sessions: row.sessions,
+          ongoing: d.isToday && row.state == PresenceState.inOffice,
+          isToday: d.isToday,
+          now: _now,
+          awayAfterMinutes: d.awayAfterMinutes,
+          personName: row.employee.fullName,
+          dayLabel: d.isToday ? 'Today' : fmtDate(d.date, pattern: 'EEEE d MMMM'),
+        ),
       ],
     ];
   }
@@ -310,56 +320,5 @@ class _AwayRow extends StatelessWidget {
         ),
       ]),
     );
-  }
-}
-
-class _SightingsList extends StatelessWidget {
-  const _SightingsList({required this.sightings, required this.awayAfterMinutes});
-  final List<Sighting>? sightings;
-  final int awayAfterMinutes;
-
-  @override
-  Widget build(BuildContext context) {
-    final list = sightings;
-    if (list == null) return const Skeleton(height: 120);
-    if (list.isEmpty) {
-      return const Panel(child: Text('No face sightings on this day.', style: TextStyle(fontSize: 13, color: C.muted)));
-    }
-    final newest = list.reversed.toList();
-    final items = <Widget>[];
-    for (var i = 0; i < newest.length; i++) {
-      final s = newest[i];
-      items.add(Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(children: [
-          SizedBox(
-              width: 96,
-              child: Text(fmtTime(s.seenAt, seconds: true), style: const TextStyle(fontSize: 13, color: C.text))),
-          if (s.arrived)
-            Container(
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(color: C.greenSoft, borderRadius: BorderRadius.circular(6)),
-              child: const Text('ARRIVED',
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: C.greenText)),
-            ),
-          Expanded(child: Text('Lens ${s.channelNo}', style: const TextStyle(fontSize: 12.5, color: C.muted))),
-          Text('${(s.similarity * 100).round()}%',
-              style: TextStyle(fontSize: 12.5, color: s.similarity >= 0.6 ? C.greenText : C.muted)),
-        ]),
-      ));
-      if (i + 1 < newest.length) {
-        final gap = s.seenAt.difference(newest[i + 1].seenAt).inSeconds;
-        if (gap > awayAfterMinutes * 60) {
-          items.add(Container(
-            width: double.infinity,
-            color: C.amberSoft,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
-            child: Text('No face for ${fmtDur(gap)}', style: const TextStyle(fontSize: 12, color: C.amberText)),
-          ));
-        }
-      }
-    }
-    return Panel(padding: const EdgeInsets.symmetric(vertical: 6), child: Column(children: items));
   }
 }

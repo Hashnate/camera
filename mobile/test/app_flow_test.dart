@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:worksight/main.dart';
 import 'package:worksight/session.dart';
+import 'package:worksight/widgets/sightings_section.dart';
 
 import 'fixtures.dart';
 
@@ -174,8 +175,42 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Day at a glance'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Face sightings'), 300, scrollable: find.byType(Scrollable).last);
-    expect(find.text('ARRIVED'), findsOneWidget);
     expect(calls, contains('GET /api/work-hours/e1/sightings'));
+
+    // Sightings by stay (the default): the latest stay is open, the first one (with the arrival) opens on a tap.
+    expect(find.text('ARRIVED'), findsNothing);
+    await tester.ensureVisible(find.byKey(const ValueKey('stay-header-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('stay-header-0')));
+    await tester.pumpAndSettle();
+    expect(find.text('ARRIVED'), findsOneWidget);
+    expect(find.textContaining('away 4m'), findsOneWidget); // between the two stays
+
+    // By hour, then the summary and its full list.
+    await tester.ensureVisible(find.text('By hour'));
+    await tester.tap(find.text('By hour'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('hour-row-0')), findsOneWidget);
+    await tester.tap(find.text('Summary'));
+    await tester.pumpAndSettle();
+    expect(find.text('Which camera'), findsOneWidget);
+    await tester.ensureVisible(find.text('See all 2 sightings'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('See all 2 sightings'));
+    await tester.pumpAndSettle();
+    expect(find.text('All sightings'), findsOneWidget);
+    await tester.ensureVisible(find.text('Lens 2 · 1')); // the filter row scrolls sideways
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lens 2 · 1'));
+    await tester.pumpAndSettle();
+    final list = find.byType(AllSightingsScreen);
+    expect(find.descendant(of: list, matching: find.text('ARRIVED')), findsNothing); // the arrival was on lens 1
+    expect(find.descendant(of: list, matching: find.text('Lens 2')), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('By stay'));
+    await tester.tap(find.text('By stay'));
+    await tester.pumpAndSettle();
     await tester.pageBack();
     await tester.pumpAndSettle();
 
