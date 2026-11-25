@@ -9,6 +9,7 @@ Needs: pip install "pyjwt[crypto]"
 """
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -19,6 +20,11 @@ import urllib.parse
 import urllib.request
 
 import jwt
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    PublicFormat,
+    load_pem_private_key,
+)
 
 
 def fail(message: str) -> None:
@@ -45,6 +51,21 @@ if "BEGIN PRIVATE KEY" not in key_p8:
 if "BEGIN PRIVATE KEY" not in key_p8:
     fail("APP_STORE_CONNECT_KEY_P8 should be the whole .p8 file, from -----BEGIN PRIVATE KEY----- "
          "to -----END PRIVATE KEY-----.")
+
+def fingerprint(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:12]
+
+
+# GitHub masks secret values in logs; these short hashes reveal nothing but can be compared
+# with the hashes of the known-good values to see which secret differs.
+try:
+    public_key = load_pem_private_key(key_p8.encode(), password=None).public_key().public_bytes(
+        Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    p8_print = fingerprint(public_key)
+except Exception:
+    p8_print = "unreadable"
+print(f"Fingerprints: key id {fingerprint(key_id.encode())}, issuer {fingerprint(issuer_id.encode())}, "
+      f"p8 public key {p8_print}")
 
 now = int(time.time())
 try:
