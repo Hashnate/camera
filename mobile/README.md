@@ -140,7 +140,10 @@ The server must be on **HTTPS**: Android and iOS block plain `http://` in releas
   release, so confirm it.
 - **Signing**: an Android upload keystore (`android/key.properties`, never committed). Release APKs built today use
   the debug key and are for testing only. iOS signing is covered by "Release to TestFlight" above.
-- **Icon and splash**: the default Flutter icon is still in place.
+- **Icon**: done, in Hashnate colours (black, white, orange `#FF6600`). The source picture is
+  `assets/icon/app_icon.png`; to change it, replace that file and run `python3 tool/make_icons.py` (needs
+  `pip install pillow numpy`), which rewrites every iOS and Android size, the Android adaptive and themed icon, and
+  `assets/icon/play_store_512.png` for the Play listing. **Splash**: still the default Flutter launch screen.
 - **Store listings**: privacy policy URL; App Store privacy labels and Play data-safety form (the app shows names,
   attendance times and camera pictures of employees; it doesn't collect face data itself).
 - **Review account**: Apple and Google reviewers need a demo server and manager login.
