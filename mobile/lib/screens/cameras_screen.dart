@@ -8,6 +8,7 @@ import '../format.dart';
 import '../session.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/shimmer.dart';
 
 /// A current picture of every lens and its recognition state.
 ///
@@ -99,39 +100,61 @@ class _CamerasScreenState extends State<CamerasScreen> with WidgetsBindingObserv
   Widget build(BuildContext context) {
     final cams = _cameras;
     final api = SessionScope.of(context).api;
+    Widget lensBones() => const Padding(
+          padding: EdgeInsets.only(bottom: 12),
+          child: BoneCard(
+            padding: EdgeInsets.zero,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              AspectRatio(aspectRatio: 16 / 9, child: Bone(radius: 0)),
+              Padding(
+                padding: EdgeInsets.fromLTRB(14, 12, 14, 14),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Bone(width: 150, height: 13),
+                  SizedBox(height: 8),
+                  Bone(width: 210, height: 10),
+                ]),
+              ),
+            ]),
+          ),
+        );
     return Scaffold(
-      appBar: AppBar(title: const Text('Cameras')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-          children: [
-            if (_error != null && cams == null)
-              ErrorPanel(message: _error!, onRetry: _load)
-            else if (cams == null)
-              const Column(children: [Skeleton(height: 220), SizedBox(height: 12), Skeleton(height: 220)])
-            else if (cams.isEmpty)
-              const Panel(
-                child: EmptyState(
-                    icon: Icons.videocam_off_outlined,
-                    title: 'No cameras turned on',
-                    message: 'Add or turn on a camera on the website, under Settings.'),
-              )
-            else
-              for (final cam in cams)
-                for (final lens in cam.lenses) ...[
-                  _LensCard(
-                    camera: cam,
-                    lens: lens,
-                    status: _status?.channel(cam.id, lens.channelNo),
-                    imageUri: api.previewUri(cam.id, lens.channelNo, bust: _bust[_key(cam, lens)] ?? 0),
-                    headers: api.authHeaders,
-                    autoRefresh: _isFree(cam, lens),
-                    onRefresh: () => _refreshLens(cam, lens),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-          ],
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          color: C.accent,
+          onRefresh: _load,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, kNavClearance),
+            children: [
+              const ScreenHeader(title: 'Cameras', subtitle: 'The current picture from each lens'),
+              const SizedBox(height: 14),
+              if (_error != null && cams == null)
+                ErrorPanel(message: _error!, onRetry: _load)
+              else if (cams == null)
+                Shimmer(child: Column(children: [lensBones(), lensBones()]))
+              else if (cams.isEmpty)
+                const Panel(
+                  child: EmptyState(
+                      icon: Icons.videocam_off_outlined,
+                      title: 'No cameras turned on',
+                      message: 'Add or turn on a camera on the website, under Settings.'),
+                )
+              else
+                for (final cam in cams)
+                  for (final lens in cam.lenses) ...[
+                    _LensCard(
+                      camera: cam,
+                      lens: lens,
+                      status: _status?.channel(cam.id, lens.channelNo),
+                      imageUri: api.previewUri(cam.id, lens.channelNo, bust: _bust[_key(cam, lens)] ?? 0),
+                      headers: api.authHeaders,
+                      autoRefresh: _isFree(cam, lens),
+                      onRefresh: () => _refreshLens(cam, lens),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+            ],
+          ),
         ),
       ),
     );
@@ -177,7 +200,7 @@ class _LensCard extends StatelessWidget {
             onTap: onRefresh,
             child: Stack(fit: StackFit.expand, children: [
               ColoredBox(
-                color: const Color(0xFF0B1220),
+                color: C.ink,
                 child: Image.network(
                   imageUri.toString(),
                   headers: headers,

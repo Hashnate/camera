@@ -54,7 +54,7 @@ class TimeAxis extends StatelessWidget {
           for (final t in ticks)
             Align(
               alignment: Alignment(-1 + 2 * (t.difference(start).inMinutes / math.max(1, span)), 0),
-              child: Text(fmt.format(t), style: const TextStyle(fontSize: 10.5, color: C.faint)),
+              child: Text(fmt.format(t), style: const TextStyle(fontSize: 10.5, color: C.subtle)),
             ),
         ],
       ),
@@ -62,7 +62,8 @@ class TimeAxis extends StatelessWidget {
   }
 }
 
-/// One person's day: work hours pale, inside green, away amber, "not seen since" striped, a blue "now" line.
+/// One person's day: work hours pale grey, inside black, away orange, "not seen since" pale orange, an orange "now"
+/// line.
 class TimelineBar extends StatelessWidget {
   const TimelineBar(
       {super.key,
@@ -107,13 +108,12 @@ class TimelineBar extends StatelessWidget {
           child: Stack(
             children: [
               const Positioned.fill(child: ColoredBox(color: C.track)),
-              if (row.schedule != null)
-                seg(row.schedule!.startAt, row.schedule!.endAt, const Color(0xFFE2E8F0), radius: 6),
-              for (final p in row.awayPeriods) seg(p.start, p.end, p.seconds >= 15 * 60 ? C.amber : C.amberLight),
-              if (notSeenTail) seg(lastEnd, now, const Color(0xFFFDE68A)),
-              for (final s in row.sessions) seg(s.start, s.end, C.green),
+              if (row.schedule != null) seg(row.schedule!.startAt, row.schedule!.endAt, C.line, radius: 6),
+              for (final p in row.awayPeriods) seg(p.start, p.end, p.seconds >= 15 * 60 ? C.accent : C.amberLight),
+              if (notSeenTail) seg(lastEnd, now, C.amberSoft),
+              for (final s in row.sessions) seg(s.start, s.end, C.ink),
               if (isToday && now.isAfter(start) && now.isBefore(end))
-                Positioned(left: x(now) - 1, width: 2, top: 0, bottom: 0, child: const ColoredBox(color: C.blue)),
+                Positioned(left: x(now) - 1, width: 2, top: 0, bottom: 0, child: const ColoredBox(color: C.accent)),
             ],
           ),
         ),
@@ -134,10 +134,10 @@ class TimelineLegend extends StatelessWidget {
           Text(label, style: const TextStyle(fontSize: 11.5, color: C.muted)),
         ]);
     return Wrap(spacing: 14, runSpacing: 6, children: [
-      item(C.green, 'Inside'),
-      item(C.amberLight, 'Away'),
-      if (isToday) item(const Color(0xFFFDE68A), 'Not seen since'),
-      item(const Color(0xFFE2E8F0), 'Work hours'),
+      item(C.ink, 'Inside'),
+      item(C.accent, 'Away'),
+      if (isToday) item(C.amberSoft, 'Not seen since'),
+      item(C.line, 'Work hours'),
     ]);
   }
 }

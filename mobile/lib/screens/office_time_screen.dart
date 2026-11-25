@@ -8,6 +8,7 @@ import '../format.dart';
 import '../session.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/shimmer.dart';
 import '../widgets/timeline.dart';
 import 'person_day_screen.dart';
 
@@ -143,160 +144,164 @@ class _OfficeTimeScreenState extends State<OfficeTimeScreen> {
     ];
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Office time'),
-        actions: [
-          if (_loading)
-            const Padding(
-                padding: EdgeInsets.only(right: 16),
-                child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                  // Day picker
-                  Row(children: [
-                    _RoundButton(
-                      icon: Icons.chevron_left,
-                      tooltip: 'Previous day',
-                      onTap: d == null ? null : () => _goTo(shiftDate(d.date, -1)),
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          color: C.accent,
+          onRefresh: _load,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    ScreenHeader(
+                      title: 'Office time',
+                      subtitle: 'Everyone\'s day inside the office',
+                      trailing: _loading && d != null
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                          : null,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Material(
-                        color: Colors.white,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10), side: const BorderSide(color: C.line)),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(10),
-                          onTap: _pickDate,
-                          child: SizedBox(
-                            height: 42,
-                            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                              const Icon(Icons.calendar_today_outlined, size: 16, color: C.muted),
-                              const SizedBox(width: 8),
-                              Flexible(
-                                child: Text(
-                                  d == null
-                                      ? 'Loading…'
-                                      : (d.isToday
-                                          ? 'Today · ${fmtDate(d.date, pattern: 'd MMM')}'
-                                          : fmtDate(d.date, pattern: 'EEE d MMM yyyy')),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: C.ink),
-                                ),
+                    const SizedBox(height: 14),
+                    // Day picker
+                    Row(children: [
+                      _RoundButton(
+                        icon: Icons.chevron_left,
+                        tooltip: 'Previous day',
+                        onTap: d == null ? null : () => _goTo(shiftDate(d.date, -1)),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), boxShadow: C.shadow),
+                          child: Material(
+                            color: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(14),
+                              onTap: _pickDate,
+                              child: SizedBox(
+                                height: 46,
+                                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                  const Icon(Icons.calendar_today_outlined, size: 16, color: C.muted),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      d == null
+                                          ? 'Loading…'
+                                          : (d.isToday
+                                              ? 'Today · ${fmtDate(d.date, pattern: 'd MMM')}'
+                                              : fmtDate(d.date, pattern: 'EEE d MMM yyyy')),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: C.ink),
+                                    ),
+                                  ),
+                                ]),
                               ),
-                            ]),
+                            ),
                           ),
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      _RoundButton(
+                        icon: Icons.chevron_right,
+                        tooltip: 'Next day',
+                        onTap: (d == null || d.isToday) ? null : () => _goTo(shiftDate(d.date, 1)),
+                      ),
+                    ]),
+                    if (d != null && !d.isToday)
+                      Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(onPressed: () => _goTo(null), child: const Text('Back to today'))),
+                    const SizedBox(height: 10),
+                    TextField(
+                      onChanged: (v) => setState(() => _query = v),
+                      textInputAction: TextInputAction.search,
+                      decoration: const InputDecoration(
+                          hintText: 'Search name, code, team', prefixIcon: Icon(Icons.search, size: 20)),
                     ),
-                    const SizedBox(width: 8),
-                    _RoundButton(
-                      icon: Icons.chevron_right,
-                      tooltip: 'Next day',
-                      onTap: (d == null || d.isToday) ? null : () => _goTo(shiftDate(d.date, 1)),
+                    const SizedBox(height: 10),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(children: [
+                        for (final (f, label) in filters) ...[
+                          ChoiceChip(
+                            label: Text('$label  ${count(f)}'),
+                            selected: _filter == f,
+                            onSelected: (_) => setState(() => _filter = f),
+                            showCheckmark: false,
+                            selectedColor: C.ink,
+                            labelStyle: TextStyle(
+                                fontSize: 13, color: _filter == f ? Colors.white : C.text, fontWeight: FontWeight.w500),
+                            side: const BorderSide(color: C.line),
+                            backgroundColor: Colors.white,
+                            shape: const StadiumBorder(),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                      ]),
                     ),
                   ]),
-                  if (d != null && !d.isToday)
-                    Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(onPressed: () => _goTo(null), child: const Text('Back to today'))),
-                  const SizedBox(height: 10),
-                  TextField(
-                    onChanged: (v) => setState(() => _query = v),
-                    textInputAction: TextInputAction.search,
-                    decoration: const InputDecoration(
-                        hintText: 'Search name, code, team', prefixIcon: Icon(Icons.search, size: 20)),
-                  ),
-                  const SizedBox(height: 10),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(children: [
-                      for (final (f, label) in filters) ...[
-                        ChoiceChip(
-                          label: Text('$label  ${count(f)}'),
-                          selected: _filter == f,
-                          onSelected: (_) => setState(() => _filter = f),
-                          showCheckmark: false,
-                          selectedColor: C.ink,
-                          labelStyle: TextStyle(
-                              fontSize: 13, color: _filter == f ? Colors.white : C.text, fontWeight: FontWeight.w500),
-                          side: const BorderSide(color: C.line),
-                          backgroundColor: Colors.white,
-                          shape: const StadiumBorder(),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                    ]),
-                  ),
-                ]),
-              ),
-            ),
-            if (_error != null && d == null)
-              SliverPadding(
-                  padding: const EdgeInsets.all(16),
-                  sliver: SliverToBoxAdapter(child: ErrorPanel(message: _error!, onRetry: _load)))
-            else if (d == null)
-              const SliverPadding(
-                padding: EdgeInsets.all(16),
-                sliver: SliverToBoxAdapter(
-                    child: Column(children: [Skeleton(height: 120), SizedBox(height: 10), Skeleton(height: 120)])),
-              )
-            else if (rows.isEmpty)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Panel(
-                    child: d.rows.isEmpty
-                        ? const EmptyState(
-                            icon: Icons.groups_outlined,
-                            title: 'No active employees',
-                            message: 'Add employees and enrol their faces on the website.')
-                        : EmptyState(
-                            icon: Icons.search_off,
-                            title: 'Nobody matches',
-                            message: 'Try another filter or search.',
-                            action: OutlinedButton(
-                                onPressed: () => setState(() => _filter = _Filter.all),
-                                child: const Text('Show everyone')),
-                          ),
-                  ),
-                ),
-              )
-            else
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-                sliver: SliverList.separated(
-                  itemCount: rows.length + 1,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, i) {
-                    if (i == rows.length) {
-                      return Padding(padding: const EdgeInsets.only(top: 6), child: TimelineLegend(isToday: isToday));
-                    }
-                    final r = rows[i];
-                    return _PersonCard(
-                      row: r,
-                      isToday: isToday,
-                      now: _now,
-                      window: window,
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => PersonDayScreen(
-                            employeeId: r.employee.id, name: r.employee.fullName, date: d.isToday ? null : d.date),
-                      )),
-                    );
-                  },
                 ),
               ),
-          ],
+              if (_error != null && d == null)
+                SliverPadding(
+                    padding: const EdgeInsets.all(16),
+                    sliver: SliverToBoxAdapter(child: ErrorPanel(message: _error!, onRetry: _load)))
+              else if (d == null)
+                const SliverPadding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  sliver: SliverToBoxAdapter(child: _CardsLoading()),
+                )
+              else if (rows.isEmpty)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Panel(
+                      child: d.rows.isEmpty
+                          ? const EmptyState(
+                              icon: Icons.groups_outlined,
+                              title: 'No active employees',
+                              message: 'Add employees and enrol their faces on the website.')
+                          : EmptyState(
+                              icon: Icons.search_off,
+                              title: 'Nobody matches',
+                              message: 'Try another filter or search.',
+                              action: OutlinedButton(
+                                  onPressed: () => setState(() => _filter = _Filter.all),
+                                  child: const Text('Show everyone')),
+                            ),
+                    ),
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, kNavClearance),
+                  sliver: SliverList.separated(
+                    itemCount: rows.length + 1,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, i) {
+                      if (i == rows.length) {
+                        return Padding(padding: const EdgeInsets.only(top: 6), child: TimelineLegend(isToday: isToday));
+                      }
+                      final r = rows[i];
+                      return _PersonCard(
+                        row: r,
+                        isToday: isToday,
+                        now: _now,
+                        window: window,
+                        onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => PersonDayScreen(
+                              employeeId: r.employee.id, name: r.employee.fullName, date: d.isToday ? null : d.date),
+                        )),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -317,11 +322,53 @@ class _RoundButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: const BorderSide(color: C.line)),
-      child: IconButton(onPressed: onTap, tooltip: tooltip, icon: Icon(icon), color: C.ink, disabledColor: C.line),
+    return DecoratedBox(
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), boxShadow: C.shadow),
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: IconButton(onPressed: onTap, tooltip: tooltip, icon: Icon(icon), color: C.ink, disabledColor: C.line),
+      ),
     );
+  }
+}
+
+/// Shimmering person cards while the day loads.
+class _CardsLoading extends StatelessWidget {
+  const _CardsLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget card(double name) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: BoneCard(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                const Bone.circle(38),
+                const SizedBox(width: 12),
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Bone(width: name, height: 12),
+                  const SizedBox(height: 8),
+                  const Bone(width: 110, height: 10),
+                ]),
+              ]),
+              const SizedBox(height: 12),
+              const Padding(padding: EdgeInsets.only(left: 50), child: Bone(width: 90, height: 22, radius: 99)),
+              const SizedBox(height: 16),
+              const Row(children: [
+                Expanded(child: Bone(height: 30, radius: 8)),
+                SizedBox(width: 10),
+                Expanded(child: Bone(height: 30, radius: 8)),
+                SizedBox(width: 10),
+                Expanded(child: Bone(height: 30, radius: 8)),
+              ]),
+              const SizedBox(height: 14),
+              const Bone(height: 10, radius: 5),
+            ]),
+          ),
+        );
+    return Shimmer(child: Column(children: [card(140), card(100), card(160)]));
   }
 }
 
@@ -402,7 +449,7 @@ class _PersonCard extends StatelessWidget {
             stat(
               'Away',
               row.awayPeriods.isEmpty
-                  ? const Text('None', style: TextStyle(fontSize: 13, color: C.faint))
+                  ? const Text('None', style: TextStyle(fontSize: 13, color: C.subtle))
                   : Text('${fmtDur(row.awaySeconds)} · ${row.awayPeriods.length}×',
                       style: strong.copyWith(color: C.amberText)),
             ),

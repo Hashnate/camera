@@ -8,6 +8,7 @@ import '../format.dart';
 import '../session.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/shimmer.dart';
 import '../widgets/timeline.dart';
 
 /// One person's day: timeline, arrival, time inside and away, and every face sighting.
@@ -120,13 +121,39 @@ class _PersonDayScreenState extends State<PersonDayScreen> {
             if (_error != null && d == null)
               ErrorPanel(message: _error!, onRetry: _load)
             else if (d == null)
-              const Column(children: [
-                Skeleton(height: 90),
-                SizedBox(height: 12),
-                Skeleton(height: 110),
-                SizedBox(height: 12),
-                Skeleton(height: 160)
-              ])
+              const Shimmer(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  BoneCard(
+                    child: Row(children: [
+                      Bone.circle(48),
+                      SizedBox(width: 14),
+                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Bone(width: 150, height: 14),
+                        SizedBox(height: 8),
+                        Bone(width: 110, height: 10),
+                      ]),
+                    ]),
+                  ),
+                  SizedBox(height: 12),
+                  BoneCard(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Bone(width: 120, height: 14),
+                      SizedBox(height: 14),
+                      Bone(height: 26, radius: 8),
+                      SizedBox(height: 10),
+                      Bone(height: 10, radius: 5),
+                    ]),
+                  ),
+                  SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(child: BoneCard(child: Bone(height: 54, radius: 8))),
+                    SizedBox(width: 10),
+                    Expanded(child: BoneCard(child: Bone(height: 54, radius: 8))),
+                  ]),
+                  SizedBox(height: 12),
+                  BoneCard(child: Bone(height: 120, radius: 10)),
+                ]),
+              )
             else if (row == null)
               const Panel(
                 child: EmptyState(
@@ -206,7 +233,7 @@ class _PersonDayScreenState extends State<PersonDayScreen> {
           StatTile(
             label: 'Arrived',
             value: fmtTime(row.arrived),
-            valueColor: row.isLate ? C.roseText : null,
+            valueColor: row.isLate ? C.accentText : null,
             sub: Text(row.isLate
                 ? 'Late by ${fmtMin(row.lateByMinutes)}'
                 : row.schedule != null
@@ -277,8 +304,7 @@ class _AwayRow extends StatelessWidget {
                 style: const TextStyle(fontSize: 13.5, color: C.text))),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          decoration:
-              BoxDecoration(color: long ? const Color(0xFFFEF3C7) : C.track, borderRadius: BorderRadius.circular(99)),
+          decoration: BoxDecoration(color: long ? C.amberSoft : C.track, borderRadius: BorderRadius.circular(99)),
           child: Text(fmtDur(span.seconds),
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: long ? C.amberText : C.muted)),
         ),
@@ -313,9 +339,9 @@ class _SightingsList extends StatelessWidget {
             Container(
               margin: const EdgeInsets.only(right: 8),
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(color: C.blueSoft, borderRadius: BorderRadius.circular(6)),
+              decoration: BoxDecoration(color: C.greenSoft, borderRadius: BorderRadius.circular(6)),
               child: const Text('ARRIVED',
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Color(0xFF1D4ED8))),
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: C.greenText)),
             ),
           Expanded(child: Text('Lens ${s.channelNo}', style: const TextStyle(fontSize: 12.5, color: C.muted))),
           Text('${(s.similarity * 100).round()}%',

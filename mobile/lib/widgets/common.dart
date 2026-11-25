@@ -3,21 +3,147 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../format.dart';
 import '../theme.dart';
+import 'shimmer.dart';
 
-/// White rounded card, like the website's cards.
+/// Space a tab's scrolling content leaves at the bottom so its last item can scroll clear of the floating tab bar.
+const double kNavClearance = 112;
+
+/// White rounded card with a soft shadow.
 class Panel extends StatelessWidget {
-  const Panel({super.key, required this.child, this.padding = const EdgeInsets.all(16), this.onTap});
+  const Panel({super.key, required this.child, this.padding = const EdgeInsets.all(16), this.onTap, this.radius = 20});
   final Widget child;
   final EdgeInsetsGeometry padding;
   final VoidCallback? onTap;
+  final double radius;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: C.line)),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(onTap: onTap, child: Padding(padding: padding, child: child)),
+    return DecoratedBox(
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(radius), boxShadow: C.shadow),
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(onTap: onTap, child: Padding(padding: padding, child: child)),
+      ),
+    );
+  }
+}
+
+/// Black card for the most important thing on a screen.
+class HeroPanel extends StatelessWidget {
+  const HeroPanel({super.key, required this.child, this.padding = const EdgeInsets.all(20)});
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: padding,
+        decoration: BoxDecoration(color: C.ink, borderRadius: BorderRadius.circular(24)),
+        child: DefaultTextStyle.merge(style: const TextStyle(color: Colors.white), child: child),
+      );
+}
+
+/// Big screen title inside the scrolling content ("Today", "Office time", ...).
+class ScreenHeader extends StatelessWidget {
+  const ScreenHeader({super.key, required this.title, this.subtitle, this.trailing});
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Semantics(
+              header: true,
+              child: Text(title,
+                  style: const TextStyle(
+                      fontSize: 30, height: 1.2, fontWeight: FontWeight.w800, letterSpacing: -0.6, color: C.ink)),
+            ),
+            if (subtitle != null) ...[
+              const SizedBox(height: 2),
+              Text(subtitle!, style: const TextStyle(fontSize: 13, color: C.muted)),
+            ],
+          ]),
+        ),
+        if (trailing != null) Padding(padding: const EdgeInsets.only(top: 4), child: trailing!),
+      ]),
+    );
+  }
+}
+
+/// "Live" chip whose dot sends out a few ripples each time the data refreshes ([pulseKey] changes), then rests.
+class LiveDot extends StatefulWidget {
+  const LiveDot({super.key, required this.color, this.pulseKey, this.size = 8});
+  final Color color;
+  final Object? pulseKey;
+  final double size;
+
+  @override
+  State<LiveDot> createState() => _LiveDotState();
+}
+
+class _LiveDotState extends State<LiveDot> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1500));
+  int _left = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _c.addStatusListener((s) {
+      if (s == AnimationStatus.completed && _left > 0) {
+        _left--;
+        _c.forward(from: 0);
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _start();
+  }
+
+  @override
+  void didUpdateWidget(LiveDot old) {
+    super.didUpdateWidget(old);
+    if (old.pulseKey != widget.pulseKey) _start();
+  }
+
+  void _start() {
+    if (MediaQuery.of(context).disableAnimations) return;
+    _left = 2; // three ripples in all
+    _c.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: widget.size,
+      height: widget.size,
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) => DecoratedBox(
+          decoration: BoxDecoration(
+            color: widget.color,
+            shape: BoxShape.circle,
+            boxShadow: [
+              if (_c.isAnimating)
+                BoxShadow(color: widget.color.withValues(alpha: 0.5 * (1 - _c.value)), spreadRadius: 7 * _c.value),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -31,7 +157,7 @@ class SectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
+      padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -39,7 +165,12 @@ class SectionTitle extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: C.ink)),
+                Semantics(
+                  header: true,
+                  child: Text(title,
+                      style: const TextStyle(
+                          fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: -0.2, color: C.ink)),
+                ),
                 if (subtitle != null) Text(subtitle!, style: const TextStyle(fontSize: 12.5, color: C.muted)),
               ],
             ),
@@ -63,6 +194,7 @@ class StatTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Panel(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      radius: 18,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -80,7 +212,8 @@ class StatTile extends StatelessWidget {
             style: TextStyle(
                 fontSize: 24,
                 height: 1,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.4,
                 color: valueColor ?? C.ink,
                 fontFeatures: const [FontFeature.tabularFigures()]),
           ),
@@ -167,19 +300,19 @@ class PresenceBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final (dot, bg, fg) = switch (presence.tone) {
       Tone.inOffice => (C.green, C.greenSoft, C.greenText),
-      Tone.away => (C.amber, C.amberSoft, C.amberText),
-      Tone.out => (C.faint, const Color(0xFFF8FAFC), C.muted),
-      Tone.present => (C.blue, C.blueSoft, const Color(0xFF1D4ED8)),
+      Tone.away => (C.accent, C.amberSoft, C.amberText),
+      Tone.out => (C.faint, C.blueSoft, C.muted),
+      Tone.present => (C.ink, C.blueSoft, C.ink),
     };
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(99)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(width: 6, height: 6, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
           const SizedBox(width: 6),
-          Text(presence.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: fg)),
+          Text(presence.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
         ],
       ),
     );
@@ -194,22 +327,23 @@ class LateTag extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(color: C.roseSoft, borderRadius: BorderRadius.circular(6)),
+      decoration: BoxDecoration(color: C.amberSoft, borderRadius: BorderRadius.circular(6)),
       child: Text(minutes > 0 ? 'Late · ${fmtMin(minutes)}' : 'Late',
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: C.roseText)),
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: C.amberText)),
     );
   }
 }
 
 // ---------------------------------------------------------------- people
 
+// Warm greys, black and orange, to sit with the Hashnate colours.
 const _avatarTones = [
-  (Color(0xFFDBEAFE), Color(0xFF1D4ED8)),
-  (Color(0xFFEDE9FE), Color(0xFF6D28D9)),
-  (Color(0xFFCCFBF1), Color(0xFF0F766E)),
-  (Color(0xFFFFEDD5), Color(0xFFC2410C)),
-  (Color(0xFFFCE7F3), Color(0xFFBE185D)),
-  (Color(0xFFE0F2FE), Color(0xFF0369A1)),
+  (Color(0xFFE7E5E4), Color(0xFF292524)),
+  (Color(0xFFFFEDD5), Color(0xFF9A3412)),
+  (Color(0xFF292524), Color(0xFFFFFFFF)),
+  (Color(0xFFF5F5F4), Color(0xFF44403C)),
+  (Color(0xFFFED7AA), Color(0xFF7C2D12)),
+  (Color(0xFFD6D3D1), Color(0xFF1C1917)),
 ];
 
 class Avatar extends StatelessWidget {
@@ -231,7 +365,7 @@ class Avatar extends StatelessWidget {
       height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-      child: Text(initials(name), style: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: size * 0.34)),
+      child: Text(initials(name), style: TextStyle(color: fg, fontWeight: FontWeight.w700, fontSize: size * 0.33)),
     );
   }
 }
@@ -319,14 +453,14 @@ class AlertStrip extends StatelessWidget {
   }
 }
 
+/// A shimmering grey card while a screen loads (for simple layouts; see widgets/shimmer.dart for shaped ones).
 class Skeleton extends StatelessWidget {
   const Skeleton({super.key, this.height = 16, this.width});
   final double height;
   final double? width;
 
   @override
-  Widget build(BuildContext context) => Container(
-      height: height, width: width, decoration: BoxDecoration(color: C.track, borderRadius: BorderRadius.circular(8)));
+  Widget build(BuildContext context) => Shimmer(child: Bone(height: height, width: width, radius: 20));
 }
 
 String healthLabel(Health h) => switch (h) {
@@ -341,18 +475,54 @@ Color healthColor(Health h) => switch (h) {
       Health.offline => C.rose,
     };
 
-/// The app mark (same as the website sidebar).
+/// The app icon, drawn: black square, white scan brackets around a clock, one orange corner.
 class BrandMark extends StatelessWidget {
   const BrandMark({super.key, this.size = 44});
   final double size;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(color: C.blue, borderRadius: BorderRadius.circular(size * 0.27)),
-      child: Icon(Icons.face_retouching_natural, color: Colors.white, size: size * 0.5),
-    );
+  Widget build(BuildContext context) => Semantics(
+        label: 'WorkSight',
+        image: true,
+        child: SizedBox(width: size, height: size, child: const CustomPaint(painter: _MarkPainter())),
+      );
+}
+
+class _MarkPainter extends CustomPainter {
+  const _MarkPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 100;
+    canvas.drawRRect(RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(24 * s)), Paint()..color = C.ink);
+    Paint stroke(Color c) => Paint()
+      ..color = c
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8 * s
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    Path corner(double x, double y, double dx, double dy) {
+      // From the vertical arm end, round the corner at (x, y), to the horizontal arm end.
+      return Path()
+        ..moveTo(x * s, (y + dy * 18) * s)
+        ..lineTo(x * s, (y + dy * 9) * s)
+        ..arcToPoint(Offset((x + dx * 9) * s, y * s), radius: Radius.circular(9 * s), clockwise: dx * dy > 0)
+        ..lineTo((x + dx * 18) * s, y * s);
+    }
+
+    final white = stroke(Colors.white);
+    canvas.drawPath(corner(22, 22, 1, 1), white);
+    canvas.drawPath(corner(78, 22, -1, 1), stroke(C.accent));
+    canvas.drawPath(corner(22, 78, 1, -1), white);
+    canvas.drawPath(corner(78, 78, -1, -1), white);
+    canvas.drawPath(
+        Path()
+          ..moveTo(48 * s, 36 * s)
+          ..lineTo(48 * s, 51 * s)
+          ..lineTo(59 * s, 56 * s),
+        white);
   }
+
+  @override
+  bool shouldRepaint(_MarkPainter old) => false;
 }
