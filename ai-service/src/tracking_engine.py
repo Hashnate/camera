@@ -25,9 +25,15 @@ log = logging.getLogger("ai.tracking")
 HANDOFF_WINDOW_SEC = 90.0     # same spot: a lost named person can hand their name on for this long
 SPOT_MIN_CORR = 0.60          # ... if the clothing is at least this similar
 REID_WINDOW_SEC = 20 * 60     # same clothes: how long a lost person's look is remembered
-REID_MIN_CORR_NEAR = 0.70     # clothing similarity needed near where they were lost
-REID_MIN_CORR_FAR = 0.85      # ... anywhere else on this lens
+REID_MIN_CORR_NEAR = 0.70     # clothing similarity needed near where they were lost (never elsewhere: shirt colours
+                              # in this office are too alike, and far hand-overs moved names across the room)
 REID_MARGIN = 0.15            # the best match must beat the next lost person by this much
+# A seated person's body track keeps restarting under a new number. When a named person walks off, the person sitting
+# next to where they were lost "appears" as a new body and used to inherit their name (25 Nov: Musni away 12:11-12:23,
+# shown present). So a new body never inherits a name if another unnamed body was at that spot just before it.
+REFORM_WINDOW_SEC = 15.0      # an unnamed body seen at the spot this long before the new one started
+REFORM_IOU = 0.40             # ... overlapping it this much: the new body is that person, re-detected
+UNNAMED_MEMORY_SEC = HANDOFF_WINDOW_SEC + 30.0
 REID_MIN_SAMPLES = 3          # frames a new body is seen before its clothing is trusted
 LOW_ONLY_MAX_SEC = 60.0       # a track kept alive only by weak detections is dropped after this long
 
@@ -408,6 +414,8 @@ class ZoneTrackingEngine:
         self.ile = IdentityLatchingEngine()
         # Named people whose body track was lost: employee_id -> {bbox, last_seen, name, code, appearance}
         self.recently_lost: Dict[str, dict] = {}
+        # Unnamed bodies recently seen: track_id -> (last seen, bbox). See REFORM_WINDOW_SEC.
+        self.recent_unnamed: Dict[int, Tuple[float, np.ndarray]] = {}
         self.appearance_enabled = False  # set once frames are passed to evaluate()
 
     # ------------------------------------------------------------- clothing signature
@@ -462,10 +470,11 @@ class ZoneTrackingEngine:
         doesn't depend on catching the face again. Two ways, on the same lens:
 
           same spot:     it appeared where a named person was lost within HANDOFF_WINDOW_SEC, in similar clothes;
-          same clothes:  its clothing clearly matches a person lost within REID_WINDOW_SEC (stricter if elsewhere).
+          same clothes:  it appeared where a named person was lost within REID_WINDOW_SEC, in clearly matching clothes.
 
         Only when one lost person clearly fits (REID_MARGIN ahead of any other), they are not on another live track,
-        and the body appeared after they were lost. A real face match on the track still overrides the inherited name.
+        the body appeared after they were lost, and no other unnamed body was at that spot just before it appeared
+        (then it's that person re-detected, not the lost one). A real face match still overrides the inherited name.
         """
         for rt in removed_tracks:
             if rt.employee_id:
@@ -485,6 +494,13 @@ class ZoneTrackingEngine:
                 continue
             if self.appearance_enabled and tr.appearance_n < REID_MIN_SAMPLES:
                 continue  # wait a moment so the clothing can be checked
+            if any(
+                tid != tr.track_id
+                and tr.started_at - REFORM_WINDOW_SEC <= seen <= tr.started_at + 1.0
+                and compute_iou(box, tr.bbox) >= REFORM_IOU
+                for tid, (seen, box) in self.recent_unnamed.items()
+            ):
+                continue  # someone unnamed was sitting right here: this "new" body is them, re-detected
             cx, cy = (tr.bbox[0] + tr.bbox[2]) / 2.0, (tr.bbox[1] + tr.bbox[3]) / 2.0
             cands: List[Tuple[float, str, str]] = []
             for emp, lost in self.recently_lost.items():
@@ -497,7 +513,7 @@ class ZoneTrackingEngine:
                 corr = self._clothing_similarity(tr.appearance, lost["appearance"])
                 if near and age <= HANDOFF_WINDOW_SEC and (corr is None or corr >= SPOT_MIN_CORR):
                     cands.append((corr if corr is not None else SPOT_MIN_CORR, emp, "same spot"))
-                elif corr is not None and corr >= (REID_MIN_CORR_NEAR if near else REID_MIN_CORR_FAR):
+                elif near and corr is not None and corr >= REID_MIN_CORR_NEAR:
                     cands.append((corr, emp, "same clothes"))
             if not cands:
                 continue
@@ -557,13 +573,25 @@ class ZoneTrackingEngine:
         - List of (face_box_xywh, employee_id, employee_name, similarity, face_id, quality_dict)
         - List of DetectedFace objects (with .box, .embedding, etc.)
         """
+        # Remember where unnamed bodies were as of the last frame (names from its face matches included).
+        for tr in self.tracker.tracks.values():
+            if tr.state == TrackState.ACTIVE and not tr.employee_id:
+                self.recent_unnamed[tr.track_id] = (tr.last_seen, tr.bbox.copy())
+        for tid in [k for k, (seen, _) in self.recent_unnamed.items() if now - seen > UNNAMED_MEMORY_SEC]:
+            del self.recent_unnamed[tid]
+
         if camera_motion is not None:
             self.tracker.apply_camera_motion(camera_motion)
             A, t = camera_motion[:, :2], camera_motion[:, 2]
-            for lost in self.recently_lost.values():
-                b = lost["bbox"]
+
+            def moved(b: np.ndarray) -> np.ndarray:
                 c = np.array([[b[0], b[1]], [b[2], b[3]]], dtype=np.float32) @ A.T + t
-                lost["bbox"] = np.array([c[0, 0], c[0, 1], c[1, 0], c[1, 1]], dtype=np.float32)
+                return np.array([c[0, 0], c[0, 1], c[1, 0], c[1, 1]], dtype=np.float32)
+
+            for lost in self.recently_lost.values():
+                lost["bbox"] = moved(lost["bbox"])
+            for tid, (seen, box) in list(self.recent_unnamed.items()):
+                self.recent_unnamed[tid] = (seen, moved(box))
         active_tracks, removed_tracks = self.tracker.update(detections, now)
         events: List[dict] = []
         diagnostics: List[dict] = []

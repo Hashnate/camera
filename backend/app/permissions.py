@@ -80,6 +80,9 @@ ACCESS_RULES: _R = [
     # Settings
     _rule(GET, r"/api/settings", Perm.SETUP_MANAGE),
     _rule(WRITE, r"/api/settings/.+", Perm.SETUP_MANAGE),
+    # Work schedules
+    _rule(GET, r"/api/work-schedules(/.*)?", Perm.REPORTS_VIEW),
+    _rule(WRITE, r"/api/work-schedules(/.*)?", Perm.SETUP_MANAGE),
     # Cameras: setup
     _rule(GET, r"/api/cameras/(brands|discover|scan)", Perm.SETUP_MANAGE),
     _rule(frozenset({"POST"}), r"/api/cameras(/(onvif|test|sync-ezviz))?", Perm.SETUP_MANAGE),

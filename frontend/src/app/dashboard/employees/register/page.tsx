@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 import { AlertCircle, ArrowLeft, CheckCircle2, ScanFace, UserPlus } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { FaceEnrollModal } from '@/components/FaceEnrollModal';
+import { useShell } from '@/components/shell/ShellContext';
 import { api } from '@/lib/api';
 import { Card, btn } from '@/components/ui';
 
@@ -61,7 +62,7 @@ function Field({
   id: string;
   label: string;
   required?: boolean;
-  hint?: string;
+  hint?: React.ReactNode;
   error?: string;
   className?: string;
   children: React.ReactNode;
@@ -110,6 +111,7 @@ function validate(f: Form): Errors {
 
 export default function AddEmployeePage() {
   const router = useRouter();
+  const canManageSetup = useShell().can('setup.manage');
   const [form, setForm] = useState<Form>(EMPTY);
   const [errors, setErrors] = useState<Errors>({});
   const [options, setOptions] = useState<Options | null>(null);
@@ -367,7 +369,20 @@ export default function AddEmployeePage() {
             </Section>
 
             <Section title="Schedule & location" description="Used to mark late arrivals and to group people by area.">
-              <Field id="workScheduleId" label="Working hours" hint="Arrivals after the start time are marked late.">
+              <Field
+                id="workScheduleId"
+                label="Working hours"
+                hint={
+                  <>
+                    Arrivals after the start time are marked late.{' '}
+                    {canManageSetup && (
+                      <Link href="/dashboard/settings?tab=work-hours" className="font-medium text-blue-600 hover:text-blue-700">
+                        Edit schedules in Settings →
+                      </Link>
+                    )}
+                  </>
+                }
+              >
                 <select
                   id="workScheduleId"
                   value={form.workScheduleId}

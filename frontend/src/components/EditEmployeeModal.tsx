@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { X, Save, Loader2, AlertCircle, UserCheck } from 'lucide-react';
+import { useShell } from '@/components/shell/ShellContext';
 import { api } from '@/lib/api';
 
 interface EditEmployeeModalProps {
@@ -14,6 +16,7 @@ const inputClass =
   'w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white transition';
 
 export function EditEmployeeModal({ employee, onClose, onUpdated }: EditEmployeeModalProps) {
+  const canManageSetup = useShell().can('setup.manage');
   const [options, setOptions] = useState<{ departments: any[]; workSchedules: any[] } | null>(null);
   const [form, setForm] = useState({
     fullName: employee.fullName || '',
@@ -190,7 +193,14 @@ export function EditEmployeeModal({ employee, onClose, onUpdated }: EditEmployee
           </label>
 
           <label className="space-y-1">
-            <span className="font-semibold text-slate-700">Work Schedule</span>
+            <span className="flex items-center justify-between gap-2 font-semibold text-slate-700">
+              <span>Work Schedule</span>
+              {canManageSetup && (
+                <Link href="/dashboard/settings?tab=work-hours" onClick={onClose} className="font-medium text-blue-600 hover:text-blue-700">
+                  Manage
+                </Link>
+              )}
+            </span>
             <select
               value={form.workScheduleId}
               onChange={handleChange('workScheduleId')}

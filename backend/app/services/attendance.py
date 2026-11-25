@@ -29,7 +29,8 @@ def is_late(schedule: Optional[WorkSchedule], at_utc: datetime) -> bool:
     if not schedule:
         return False
     local = _local(at_utc)
-    return local > _schedule_time(local, schedule.start_time, schedule.grace_minutes or 15)
+    grace = 15 if schedule.grace_minutes is None else schedule.grace_minutes
+    return local > _schedule_time(local, schedule.start_time, grace)
 
 
 def is_early_departure(schedule: Optional[WorkSchedule], at_utc: datetime) -> bool:

@@ -214,6 +214,12 @@ Brand templates (`GET /api/cameras/brands`): Hikvision (`/Streaming/Channels/{c}
 ### 6.5 `GET /api/internal/runtime-config` (service key)
 `{ recognition: {...} }` for the AI service. `GET /api/internal/cameras` returns switched-on cameras of every type; each lens has `recognitionEnabled` and `source: {type: ezviz|rtsp|http|usb, url (with credentials), key}`. The AI service reconnects a lens when its `key` changes. AI-service endpoints used by the backend: `POST /grab-frame {source, key?}` and `GET /preview/:cameraId/:channelNo` (both need the service key).
 
+### 6.6 Work schedules (`GET` needs `reports.view`, writes need `setup.manage`)
+- `GET /api/work-schedules` — `{ canEdit, data: [{ id, officeId, name, startTime, endTime, graceMinutes, workingDays, employeeCount }] }`.
+- `POST /api/work-schedules` `{ name, startTime, endTime, graceMinutes?, workingDays? }` — creates a shift schedule (`HH:MM` 24h, `endTime > startTime`, `graceMinutes` 0–240, `workingDays` `"1,2,3,4,5"`).
+- `PATCH /api/work-schedules/:id` — updates any subset of the fields above.
+- `DELETE /api/work-schedules/:id` — removes the schedule and sets assigned employees' `workScheduleId` to `null`.
+
 ---
 
 ## 7. Users, sign-in and access levels

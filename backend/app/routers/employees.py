@@ -55,7 +55,15 @@ def form_options(db: Session = Depends(get_db)):
         "data": {
             "departments": [{"id": d.id, "name": d.name} for d in depts],
             "workSchedules": [
-                {"id": w.id, "name": w.name, "startTime": w.start_time, "endTime": w.end_time} for w in schedules
+                {
+                    "id": w.id,
+                    "name": w.name,
+                    "startTime": w.start_time,
+                    "endTime": w.end_time,
+                    "graceMinutes": w.grace_minutes,
+                    "workingDays": w.working_days,
+                }
+                for w in schedules
             ],
             "zones": [{"id": z.id, "name": z.name} for z in zones],
             "designationsByDepartment": {
@@ -179,6 +187,10 @@ def update_employee(employee_id: str, body: dict = Depends(json_body), db: Sessi
         if existing:
             raise ApiError(409, f"Employee code '{new_code}' already exists")
         emp.employee_code = new_code
+
+    if "workScheduleId" in body and body["workScheduleId"]:
+        if not db.get(WorkSchedule, str(body["workScheduleId"])):
+            raise ApiError(404, "Work schedule not found")
 
     # Only fields present in the body are changed (an explicit null clears a nullable field).
     for key, attr in _EDITABLE.items():

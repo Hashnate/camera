@@ -21,6 +21,7 @@ from app.models import (
     PresenceSession,
 )
 from app.security import current_user, json_body
+from app.services import seat_memory
 from app.services.daily_tracking_engine import DailyTrackingService
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"])
@@ -409,7 +410,8 @@ def ingest_tracking_frame(body: dict = Depends(json_body), db: Session = Depends
             db.flush()
         else:
             session.last_seen_at = now
-            if emp_id and not session.employee_id:
+            # A name from seat memory (app.services.seat_memory) gives way to what the AI recognises on the track.
+            if emp_id and (not session.employee_id or session.identity_verification_status == seat_memory.SEAT):
                 session.employee_id = emp_id
                 session.identity_verification_status = identity_status
             if zone_id:

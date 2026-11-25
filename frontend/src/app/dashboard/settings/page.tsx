@@ -7,24 +7,26 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, Cctv, KeyRound, Loader2, ScanFace, Smartphone, UserCheck, X, type LucideIcon } from 'lucide-react';
+import { AlertCircle, Check, Cctv, Clock, KeyRound, Loader2, ScanFace, Smartphone, UserCheck, X, type LucideIcon } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Card, Skeleton, btn } from '@/components/ui';
 import { useShell } from '@/components/shell/ShellContext';
 import { CamerasTab } from '@/components/settings/CamerasTab';
+import { WorkSchedulesTab } from '@/components/settings/WorkSchedulesTab';
 import { Notice, inputBase } from '@/components/settings/parts';
 import { settingsApi, type SettingsSection, type SettingsSectionName } from '@/lib/api';
 import { fmtTime } from '@/lib/format';
 
 // ---------------------------------------------------------------- tabs
 
-type TabId = 'cameras' | 'account' | 'recognition' | 'attendance' | 'enrollment';
+type TabId = 'cameras' | 'account' | 'recognition' | 'attendance' | 'work-hours' | 'enrollment';
 
 const TABS: { id: TabId; label: string; icon: LucideIcon; description: string }[] = [
   { id: 'cameras', label: 'Cameras', icon: Cctv, description: 'Add cameras and choose which lenses recognise faces' },
   { id: 'account', label: 'EZVIZ account', icon: KeyRound, description: 'Only needed for EZVIZ cloud cameras' },
   { id: 'recognition', label: 'Recognition', icon: ScanFace, description: 'How sure the system must be before it names someone' },
   { id: 'attendance', label: 'Attendance', icon: UserCheck, description: 'Away time, check-out and repeat sightings' },
+  { id: 'work-hours', label: 'Work hours', icon: Clock, description: 'Shift start and end times, grace periods and working days' },
   { id: 'enrollment', label: 'Phone enrolment', icon: Smartphone, description: 'The QR code link and photos kept per employee' },
 ];
 
@@ -622,7 +624,24 @@ export default function SettingsPage() {
                     footnote={applied && <p className="text-[12px] text-slate-500">{applied}</p>}
                   />
                 )}
-                {tab === 'attendance' && <SectionForm name="attendance" groups={ATTENDANCE_GROUPS} section={data.attendance} canEdit={canEdit} onSaved={onSaved} />}
+                {tab === 'attendance' && (
+                  <SectionForm
+                    name="attendance"
+                    groups={ATTENDANCE_GROUPS}
+                    section={data.attendance}
+                    canEdit={canEdit}
+                    onSaved={onSaved}
+                    footnote={
+                      <p className="text-[12px] text-slate-500">
+                        Need to change shift start/end times or grace periods?{' '}
+                        <button type="button" onClick={() => selectTab('work-hours')} className="font-medium text-blue-600 hover:text-blue-700">
+                          Manage work hours →
+                        </button>
+                      </p>
+                    }
+                  />
+                )}
+                {tab === 'work-hours' && <WorkSchedulesTab canEdit={canEdit} notify={notify} />}
                 {tab === 'enrollment' && <SectionForm name="enrollment" groups={ENROLLMENT_GROUPS} section={data.enrollment} canEdit={canEdit} onSaved={onSaved} />}
               </>
             ) : null}

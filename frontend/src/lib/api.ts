@@ -103,7 +103,7 @@ export const api = {
       success: boolean;
       data: {
         departments: { id: string; name: string }[];
-        workSchedules: { id: string; name: string; startTime: string; endTime: string }[];
+        workSchedules: { id: string; name: string; startTime: string; endTime: string; graceMinutes?: number; workingDays?: string }[];
       };
     }>('/employees/form-options'),
   createEmployee: (payload: any) =>
@@ -625,6 +625,27 @@ export interface CameraChanges {
   removeChannels?: number[];
 }
 
+export interface WorkSchedule {
+  id: string;
+  officeId: string;
+  name: string;
+  startTime: string;
+  endTime: string;
+  graceMinutes: number;
+  workingDays: string;
+  employeeCount: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkSchedulePayload {
+  name: string;
+  startTime: string;
+  endTime: string;
+  graceMinutes: number;
+  workingDays: string;
+}
+
 export const settingsApi = {
   all: () =>
     apiFetch<{ success: boolean; canEdit: boolean; data: Record<SettingsSectionName, SettingsSection> }>('/settings'),
@@ -672,6 +693,23 @@ export const settingsApi = {
     }),
   removeCamera: (id: string) => apiFetch<{ success: boolean }>(`/cameras/${id}`, { method: 'DELETE' }),
   refreshCameras: () => apiFetch<{ success: boolean; message: string }>('/cameras/sync-ezviz', { method: 'POST' }),
+
+  workSchedules: () =>
+    apiFetch<{ success: boolean; canEdit: boolean; data: WorkSchedule[] }>('/work-schedules'),
+  createWorkSchedule: (body: WorkSchedulePayload) =>
+    apiFetch<{ success: boolean; data: WorkSchedule }>('/work-schedules', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateWorkSchedule: (id: string, body: Partial<WorkSchedulePayload>) =>
+    apiFetch<{ success: boolean; data: WorkSchedule }>(`/work-schedules/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteWorkSchedule: (id: string) =>
+    apiFetch<{ success: boolean; message: string; unassignedEmployees: number }>(`/work-schedules/${id}`, {
+      method: 'DELETE',
+    }),
 };
 
 /** A stretch of continuous camera sightings (start/end are the first/last sighting). */
