@@ -195,6 +195,18 @@ class IdentityLatchingEngine:
                 del self._active_latches[rec.employee_id]
             rec.transition(IdentityLatchState.REMOVED, now)
 
+    def release_track(self, track_id: int, now: float):
+        """Take the name off a track that stays alive (the same person can't be on two bodies at once)."""
+        rec = self._records.get(track_id)
+        if rec is None:
+            return
+        self._clear_latch(rec)
+        rec.candidate_employee_id = rec.candidate_employee_name = rec.candidate_employee_code = None
+        rec.candidate_hits = 0
+        rec.candidate_window_hits = []
+        rec.conflict_hits = 0
+        rec.transition(IdentityLatchState.UNVERIFIED, now)
+
     def notify_path_crossing(self, track_id_a: int, track_id_b: int, now: float):
         """Call when two tracks' bounding boxes overlap significantly (IoU > 0.3)."""
         for tid in (track_id_a, track_id_b):

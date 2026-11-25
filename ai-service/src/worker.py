@@ -8,6 +8,7 @@ Frames are processed in memory only; nothing is written to disk.
 """
 
 import logging
+import re
 import threading
 import time
 import uuid
@@ -69,6 +70,14 @@ def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+_PAN_TILT_NAME = re.compile(r"pan[\s_-]*tilt|\bptz?\b", re.IGNORECASE)
+
+
+def _is_pan_tilt(lens_name: str) -> bool:
+    """Lens names like "Hashnate -PT (Pan-Tilt Lens)" or "Front PTZ"."""
+    return bool(_PAN_TILT_NAME.search(lens_name or ""))
+
+
 class ChannelWorker(threading.Thread):
     def __init__(self, manager: "RecognitionManager", camera: dict, channel_no: int):
         super().__init__(daemon=True, name=f"cam-{camera['id'][:8]}-ch{channel_no}")
@@ -103,6 +112,13 @@ class ChannelWorker(threading.Thread):
             # to keep existing tracks alive; new tracks still need a confident (>= 0.30) detection.
             self.yolo_detector = YOLOPersonDetector(conf_threshold=0.15, iou_threshold=0.45)
             self.tracking_engine = ZoneTrackingEngine(width=1920, height=1080)
+            lens_name = next(
+                (ch.get("channelName") or "" for ch in camera.get("channels", []) if ch.get("channelNo") == channel_no), ""
+            )
+            if _is_pan_tilt(lens_name):
+                # The picture moves with the lens, so "same spot" hand-overs gave names to the wrong people (25 Nov).
+                self.tracking_engine.handoff_enabled = False
+                log.info("[%s] %s is a pan-tilt lens: no same-spot name hand-over", self.name, lens_name)
             self._sync_zones()
         except Exception as e:
             log.warning("[%s] Could not initialize YOLO person tracking: %s", self.name, e)

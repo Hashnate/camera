@@ -24,9 +24,9 @@ log = logging.getLogger("ai.tracking")
 # 95th percentile 0.47-0.59.
 HANDOFF_WINDOW_SEC = 90.0     # same spot: a lost named person can hand their name on for this long
 SPOT_MIN_CORR = 0.60          # ... if the clothing is at least this similar
-REID_WINDOW_SEC = 20 * 60     # same clothes: how long a lost person's look is remembered
-REID_MIN_CORR_NEAR = 0.70     # clothing similarity needed near where they were lost (never elsewhere: shirt colours
-                              # in this office are too alike, and far hand-overs moved names across the room)
+# No "same clothes" hand-over after longer gaps: shirt colour can't tell people in this office apart well enough
+# (25 Nov: different people scored 0.71-0.76, and 5 of 12 such hand-overs in one afternoon kept Musni's name on other
+# people for 37 minutes while he was out). A body-ReID model could bring it back as a stronger check.
 REID_MARGIN = 0.15            # the best match must beat the next lost person by this much
 # A seated person's body track keeps restarting under a new number. When a named person walks off, the person sitting
 # next to where they were lost "appears" as a new body and used to inherit their name (25 Nov: Musni away 12:11-12:23,
@@ -34,6 +34,12 @@ REID_MARGIN = 0.15            # the best match must beat the next lost person by
 REFORM_WINDOW_SEC = 15.0      # an unnamed body seen at the spot this long before the new one started
 REFORM_IOU = 0.40             # ... overlapping it this much: the new body is that person, re-detected
 UNNAMED_MEMORY_SEC = HANDOFF_WINDOW_SEC + 30.0
+# One person, one body. 25 Nov: Afham's and Musni's names sat on two bodies at once on the pan-tilt lens, because a
+# face match the old exclusivity check had refused still reached the latching engine, and names handed on without a
+# face weren't counted as taken. A body keeps its name; a new face match can only take it over when it is strong and
+# the current holder's face hasn't been seen for a while (then the holder is more likely the wrong body).
+TAKEOVER_SIM = 0.60
+TAKEOVER_STALE_SEC = 60.0
 REID_MIN_SAMPLES = 3          # frames a new body is seen before its clothing is trusted
 LOW_ONLY_MAX_SEC = 60.0       # a track kept alive only by weak detections is dropped after this long
 
@@ -417,6 +423,12 @@ class ZoneTrackingEngine:
         # Unnamed bodies recently seen: track_id -> (last seen, bbox). See REFORM_WINDOW_SEC.
         self.recent_unnamed: Dict[int, Tuple[float, np.ndarray]] = {}
         self.appearance_enabled = False  # set once frames are passed to evaluate()
+        # "Same spot" hand-over only makes sense when the picture stays still: off for pan-tilt lenses (set by the
+        # worker from the lens name) and for HANDOFF_WINDOW_SEC after any detected camera movement.
+        self.handoff_enabled = True
+        self.last_camera_motion_at = float("-inf")
+        # track_id -> (employee_id, since when that track has had this name): who holds a name first keeps it.
+        self.named_since: Dict[int, Tuple[str, float]] = {}
 
     # ------------------------------------------------------------- clothing signature
 
@@ -467,10 +479,8 @@ class ZoneTrackingEngine:
 
     def _hand_off_identities(self, active_tracks: List[Track], removed_tracks: List[Track], now: float) -> None:
         """Give a new, unnamed body track the name of a recently lost person when it is clearly them, so office time
-        doesn't depend on catching the face again. Two ways, on the same lens:
-
-          same spot:     it appeared where a named person was lost within HANDOFF_WINDOW_SEC, in similar clothes;
-          same clothes:  it appeared where a named person was lost within REID_WINDOW_SEC, in clearly matching clothes.
+        doesn't depend on catching the face again: on the same lens, it appeared where a named person was lost within
+        HANDOFF_WINDOW_SEC ("same spot"), in similar clothes.
 
         Only when one lost person clearly fits (REID_MARGIN ahead of any other), they are not on another live track,
         the body appeared after they were lost, and no other unnamed body was at that spot just before it appeared
@@ -484,10 +494,12 @@ class ZoneTrackingEngine:
         for t in lost_named.values():
             self._remember_lost(t)
         on_track = {t.employee_id for t in active_tracks if t.employee_id}
-        for emp in [e for e, v in self.recently_lost.items() if e in on_track or now - v["last_seen"] > REID_WINDOW_SEC]:
+        for emp in [e for e, v in self.recently_lost.items() if e in on_track or now - v["last_seen"] > HANDOFF_WINDOW_SEC]:
             del self.recently_lost[emp]
         if not self.recently_lost:
             return
+        if not self.handoff_enabled or now - self.last_camera_motion_at <= HANDOFF_WINDOW_SEC:
+            return  # the lens moves: "the same place in the picture" isn't the same place in the room
 
         for tr in active_tracks:
             if tr.employee_id:
@@ -513,8 +525,6 @@ class ZoneTrackingEngine:
                 corr = self._clothing_similarity(tr.appearance, lost["appearance"])
                 if near and age <= HANDOFF_WINDOW_SEC and (corr is None or corr >= SPOT_MIN_CORR):
                     cands.append((corr if corr is not None else SPOT_MIN_CORR, emp, "same spot"))
-                elif near and corr is not None and corr >= REID_MIN_CORR_NEAR:
-                    cands.append((corr, emp, "same clothes"))
             if not cands:
                 continue
             cands.sort(reverse=True)
@@ -535,6 +545,53 @@ class ZoneTrackingEngine:
                 "Identity handoff (%s, clothing %s, after %.0fs): track %s continues %s",
                 why, f"{score:.2f}" if self.appearance_enabled else "n/a", now - lost["last_seen"], tr.track_id, lost["name"] or emp,
             )
+
+    # ------------------------------------------------------------- one person, one body
+
+    @staticmethod
+    def _last_face_at(tr: Track) -> float:
+        times = [t for t in (tr.last_face_seen_at, tr.last_biometric_at) if t is not None]
+        return max(times) if times else float("-inf")
+
+    def _strip_name(self, tr: Track, now: float, why: str) -> None:
+        log.info("Name check: track %s loses %s (%s)", tr.track_id, tr.employee_name or tr.employee_id, why)
+        tr.employee_id = tr.employee_name = tr.employee_code = None
+        tr.identity_status = IdentityState.UNVERIFIED
+        tr.identity_confidence = 0.0
+        tr.identity_hits = 0
+        tr.candidate_employee_id = tr.candidate_employee_name = None
+        tr.candidate_hits = 0
+        tr.conflict_hits = 0
+        tr.verified_at = None
+        self.ile.release_track(tr.track_id, now)
+        self.named_since.pop(tr.track_id, None)
+
+    def _one_body_per_name(self, active_tracks: List[Track], now: float) -> None:
+        """Safety net after all naming steps: if a name ended up on two bodies, the one that had it first keeps it."""
+        holders: Dict[str, List[Track]] = {}
+        for tr in active_tracks:
+            if tr.employee_id:
+                holders.setdefault(tr.employee_id, []).append(tr)
+        for emp, trs in holders.items():
+            if len(trs) < 2:
+                continue
+
+            def since(t: Track) -> float:
+                held = self.named_since.get(t.track_id)
+                return held[1] if held and held[0] == emp else now
+
+            keep = min(trs, key=lambda t: (since(t), -t.identity_confidence))
+            for tr in trs:
+                if tr is not keep:
+                    self._strip_name(tr, now, f"already on track {keep.track_id}")
+        for tr in active_tracks:
+            held = self.named_since.get(tr.track_id)
+            if not tr.employee_id:
+                self.named_since.pop(tr.track_id, None)
+            elif held is None or held[0] != tr.employee_id:
+                self.named_since[tr.track_id] = (tr.employee_id, now)
+        for tid in [k for k in self.named_since if k not in self.tracker.tracks]:
+            del self.named_since[tid]
 
     def set_config(self, zones: List[dict], lines: List[dict]):
         self.zones = zones
@@ -581,6 +638,7 @@ class ZoneTrackingEngine:
             del self.recent_unnamed[tid]
 
         if camera_motion is not None:
+            self.last_camera_motion_at = now
             self.tracker.apply_camera_motion(camera_motion)
             A, t = camera_motion[:, :2], camera_motion[:, 2]
 
@@ -599,6 +657,7 @@ class ZoneTrackingEngine:
         # Notify ILE of removed tracks
         for rt in removed_tracks:
             self.ile.mark_track_removed(rt.track_id, now)
+            self.named_since.pop(rt.track_id, None)
 
         if frame is not None:
             self.appearance_enabled = True
@@ -640,12 +699,10 @@ class ZoneTrackingEngine:
         # -------------------------------------------------------------
         # 2. Optimal 1-to-1 Anatomical Face-to-Person Association
         # -------------------------------------------------------------
-        # Active identity map for live verified tracks (Exclusivity Guard)
-        active_identity_map: Dict[str, int] = {
-            t.employee_id: t.track_id
-            for t in active_tracks
-            if t.employee_id and t.identity_status == IdentityState.VERIFIED
-        }
+        # Who holds which name right now (Exclusivity Guard): every named live body counts, also names carried
+        # without a face (hand-over, latching), not only freshly VERIFIED ones.
+        active_identity_map: Dict[str, int] = {t.employee_id: t.track_id for t in active_tracks if t.employee_id}
+        tracks_by_id: Dict[int, Track] = {t.track_id: t for t in active_tracks}
 
         if parsed_faces and active_tracks:
             cost_matrix = np.full((len(parsed_faces), len(active_tracks)), 9999.0, dtype=np.float32)
@@ -738,12 +795,19 @@ class ZoneTrackingEngine:
                 # do not duplicate identity onto this track!
                 existing_tid = active_identity_map.get(emp_id)
                 if existing_tid is not None and existing_tid != tr.track_id:
-                    if tr.identity_status != IdentityState.VERIFIED:
-                        tr.identity_status = IdentityState.AMBIGUOUS
-                    diag_entry["recognitionState"] = IdentityState.AMBIGUOUS
-                    diag_entry["note"] = f"Suppressed: {emp_id} already active on Track {existing_tid}"
-                    diagnostics.append(diag_entry)
-                    continue
+                    holder = tracks_by_id.get(existing_tid)
+                    if holder is not None and sim >= TAKEOVER_SIM and now - self._last_face_at(holder) >= TAKEOVER_STALE_SEC:
+                        # Strong, fresh face here; the holder's face hasn't been seen for a while: likely the wrong body.
+                        self._strip_name(holder, now, f"strong face match {sim:.2f} on track {tr.track_id}")
+                        del active_identity_map[emp_id]
+                    else:
+                        if tr.identity_status != IdentityState.VERIFIED:
+                            tr.identity_status = IdentityState.AMBIGUOUS
+                        diag_entry["recognitionState"] = IdentityState.AMBIGUOUS
+                        diag_entry["note"] = f"Suppressed: {emp_id} already active on Track {existing_tid}"
+                        diag_entry["suppressed"] = True  # not passed on to the latching engine either
+                        diagnostics.append(diag_entry)
+                        continue
 
                 # RULE 2: OVERWRITE PROTECTION
                 # If track is already VERIFIED to employee A, do not overwrite on single conflict!
@@ -822,6 +886,8 @@ class ZoneTrackingEngine:
         track_face_map: Dict[int, Optional[dict]] = {tr.track_id: None for tr in active_tracks}
         for d_entry in diagnostics:
             tid = d_entry.get("trackId")
+            if d_entry.get("suppressed"):
+                continue  # refused above: that name is on another body, so don't let the latching engine use it
             if tid is not None:
                 matched_emp_id = d_entry.get("matchedEmployeeId")
                 if matched_emp_id:
@@ -867,6 +933,8 @@ class ZoneTrackingEngine:
                 tr.identity_status = IdentityState.TRACKING_UNCERTAIN
             elif ile_rec.state == IdentityLatchState.REQUIRES_REVERIFICATION:
                 tr.identity_status = IdentityState.REQUIRES_REVERIFICATION
+
+        self._one_body_per_name(active_tracks, now)
 
         # -------------------------------------------------------------
         # 5. Zone Containment & Doorway Crossing Detection
