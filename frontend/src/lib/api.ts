@@ -1340,3 +1340,77 @@ export const meApi = {
   officeTime: (date?: string, days = 14) =>
     apiFetch<{ success: boolean } & MyOfficeTime>(`/me/office-time?days=${days}${date ? `&date=${date}` : ''}`),
 };
+
+// ---------------------------------------------------------------- integrations (Settings > Integrations)
+
+export interface ApiKeyInfo {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  isActive: boolean;
+  createdByName?: string | null;
+}
+
+export interface WebhookInfo {
+  id: string;
+  url: string;
+  description: string | null;
+  events: string[];
+  awayAfterMin: number;
+  createdAt: string;
+  createdBy: 'api' | 'dashboard';
+  apiKeyName: string | null;
+  isActive: boolean;
+  lastDeliveryAt: string | null;
+  lastStatus: 'OK' | 'FAILING' | null;
+  lastError: string | null;
+}
+
+export interface WebhookDeliveryInfo {
+  id: string;
+  event: string;
+  status: 'PENDING' | 'SENDING' | 'DELIVERED' | 'FAILED';
+  attempts: number;
+  createdAt: string;
+  deliveredAt: string | null;
+  nextAttemptAt: string | null;
+  lastStatusCode: number | null;
+  lastError: string | null;
+  data: Record<string, unknown> | null;
+}
+
+export interface NewWebhook {
+  url: string;
+  events: string[];
+  awayAfterMin: number;
+  description?: string;
+}
+
+export const integrationsApi = {
+  keys: () =>
+    apiFetch<{ success: boolean; data: ApiKeyInfo[]; scopes: { scope: string; description: string }[]; docsPath: string }>(
+      '/integrations/keys',
+    ),
+  createKey: (name: string, scopes: string[]) =>
+    apiFetch<{ success: boolean; data: ApiKeyInfo & { key: string } }>('/integrations/keys', {
+      method: 'POST',
+      body: JSON.stringify({ name, scopes }),
+    }),
+  revokeKey: (id: string) => apiFetch<{ success: boolean; data: ApiKeyInfo }>(`/integrations/keys/${id}`, { method: 'DELETE' }),
+  webhooks: () =>
+    apiFetch<{ success: boolean; data: WebhookInfo[]; events: { event: string; description: string }[] }>('/integrations/webhooks'),
+  createWebhook: (body: NewWebhook) =>
+    apiFetch<{ success: boolean; data: WebhookInfo & { secret: string } }>('/integrations/webhooks', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  removeWebhook: (id: string) => apiFetch<{ success: boolean }>(`/integrations/webhooks/${id}`, { method: 'DELETE' }),
+  testWebhook: (id: string) =>
+    apiFetch<{ success: boolean; data: WebhookDeliveryInfo }>(`/integrations/webhooks/${id}/test`, { method: 'POST' }),
+  deliveries: (id: string) =>
+    apiFetch<{ success: boolean; data: WebhookDeliveryInfo[] }>(`/integrations/webhooks/${id}/deliveries`),
+};

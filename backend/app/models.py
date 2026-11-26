@@ -383,6 +383,82 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column("createdAt", Timestamp, default=utcnow, nullable=False)
 
 
+class ApiKey(Base):
+    """A key another system (e.g. an ERP) uses to call the integration API (/api/v1). Only its hash is stored."""
+
+    __tablename__ = "ApiKey"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(Text, nullable=False)  # who uses it, e.g. "ERPNext"
+    key_prefix: Mapped[str] = mapped_column("keyPrefix", Text, nullable=False)  # start of the key, to tell keys apart
+    key_hash: Mapped[str] = mapped_column("keyHash", Text, unique=True, nullable=False, info={"private": True})
+    scopes: Mapped[str] = mapped_column(Text, nullable=False)  # space-separated, see app.api_keys.SCOPES
+    created_by_id: Mapped[Optional[str]] = mapped_column("createdById", Text, _fk("User.id", "SET NULL"))
+    created_at: Mapped[datetime] = mapped_column("createdAt", Timestamp, default=utcnow, nullable=False)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column("lastUsedAt", Timestamp)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column("revokedAt", Timestamp)
+
+
+class WebhookEndpoint(Base):
+    """An address WorkSight sends events to (app.services.webhooks). Made by an admin or through the API with a key."""
+
+    __tablename__ = "WebhookEndpoint"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    events: Mapped[str] = mapped_column(Text, nullable=False)  # space-separated, see app.services.webhooks.EVENTS
+    secret_enc: Mapped[str] = mapped_column("secretEnc", Text, nullable=False, info={"private": True})
+    away_after_min: Mapped[int] = mapped_column("awayAfterMin", Integer, default=15, nullable=False)
+    # Only admins (dashboard) may point a webhook at a private network address or plain http.
+    allow_private: Mapped[bool] = mapped_column("allowPrivate", Boolean, default=False, nullable=False)
+    # Made through the API with this key: revoking the key stops the webhook. Null = made in the dashboard.
+    api_key_id: Mapped[Optional[str]] = mapped_column("apiKeyId", Text, _fk("ApiKey.id", "SET NULL"))
+    created_by_id: Mapped[Optional[str]] = mapped_column("createdById", Text, _fk("User.id", "SET NULL"))
+    created_at: Mapped[datetime] = mapped_column("createdAt", Timestamp, default=utcnow, nullable=False)
+    primed_at: Mapped[Optional[datetime]] = mapped_column("primedAt", Timestamp)  # presence state recorded, events flow
+    last_delivery_at: Mapped[Optional[datetime]] = mapped_column("lastDeliveryAt", Timestamp)
+    last_status: Mapped[Optional[str]] = mapped_column("lastStatus", Text)  # OK | FAILING
+    last_error: Mapped[Optional[str]] = mapped_column("lastError", Text)
+
+    api_key: Mapped[Optional[ApiKey]] = relationship()
+
+
+class WebhookDelivery(Base):
+    """One event for one webhook: sent, retried with back-off, then DELIVERED or FAILED. Its id is the event id."""
+
+    __tablename__ = "WebhookDelivery"
+    __table_args__ = (Index("WebhookDelivery_status_next_idx", "status", "nextAttemptAt"),)
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
+    endpoint_id: Mapped[str] = mapped_column(
+        "endpointId", Text, _fk("WebhookEndpoint.id", "CASCADE"), nullable=False, index=True
+    )
+    event: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)  # the exact JSON body sent (and signed)
+    status: Mapped[str] = mapped_column(Text, default="PENDING", nullable=False)  # PENDING | DELIVERED | FAILED
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column("nextAttemptAt", Timestamp, default=utcnow, nullable=False)
+    last_status_code: Mapped[Optional[int]] = mapped_column("lastStatusCode", Integer)
+    last_error: Mapped[Optional[str]] = mapped_column("lastError", Text)
+    created_at: Mapped[datetime] = mapped_column("createdAt", Timestamp, default=utcnow, nullable=False)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column("deliveredAt", Timestamp)
+
+    endpoint: Mapped[WebhookEndpoint] = relationship()
+
+
+class WebhookPresenceState(Base):
+    """How many of today's presence events a webhook has been sent for each employee (arrived, went away, ...)."""
+
+    __tablename__ = "WebhookPresenceState"
+
+    endpoint_id: Mapped[str] = mapped_column("endpointId", Text, _fk("WebhookEndpoint.id", "CASCADE"), primary_key=True)
+    employee_id: Mapped[str] = mapped_column("employeeId", Text, _fk("Employee.id", "CASCADE"), primary_key=True)
+    date: Mapped[str] = mapped_column(Text, nullable=False)  # office date the count is for
+    emitted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column("updatedAt", Timestamp, default=utcnow, onupdate=utcnow, nullable=False)
+
+
 # ---------------------------------------------------------------- automatic attendance (face recognition)
 
 

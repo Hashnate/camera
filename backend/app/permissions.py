@@ -4,8 +4,9 @@ Every request from a signed-in user is checked against ACCESS_RULES in app.secur
 An endpoint that matches no rule is refused, so a new endpoint can't be left open by accident: add a rule for it.
 
 Endpoints that don't sign users in at all are outside this table: /api/auth/login, /api/health, the phone
-enrolment link (/api/public/enroll, protected by its one-time token) and the AI service's /api/internal/* calls
-(protected by the service key).
+enrolment link (/api/public/enroll, protected by its one-time token), the AI service's /api/internal/* calls
+(protected by the service key) and the integration API /api/v1/* (protected by API keys and their scopes, see
+app.api_keys).
 """
 
 import re
@@ -75,8 +76,9 @@ ACCESS_RULES: _R = [
     _rule(GET, r"/api/attendance/me/(today|history)", Perm.SELF_VIEW),
     # Self check-in/out; checking in someone else is re-checked in the endpoint (people.manage).
     _rule(frozenset({"POST"}), r"/api/attendance/check-(in|out)", Perm.SELF_VIEW),
-    # User accounts
+    # User accounts, and API keys for other systems (a key is access to the data, like an account)
     _rule(EVERY, r"/api/users(/.*)?", Perm.USERS_MANAGE),
+    _rule(EVERY, r"/api/integrations/(keys|webhooks)(/.*)?", Perm.USERS_MANAGE),
     # Settings
     _rule(GET, r"/api/settings", Perm.SETUP_MANAGE),
     _rule(WRITE, r"/api/settings/.+", Perm.SETUP_MANAGE),

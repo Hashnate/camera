@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models import RecognitionEvent
 from app.security import current_user
 from app.serialize import ser
+from app.services.attendance import UNCONFIRMED
 
 router = APIRouter(prefix="/api/recognition", tags=["recognition"], dependencies=[Depends(current_user)])
 
@@ -22,6 +23,8 @@ def events(limit: int = 50, actions: Optional[str] = None, db: Session = Depends
     stmt = select(RecognitionEvent)
     if actions:
         stmt = stmt.where(RecognitionEvent.action.in_([a.strip().upper() for a in actions.split(",") if a.strip()]))
+    else:  # a first sighting not yet confirmed as that person isn't news (app.services.attendance.CONFIRM_SIM)
+        stmt = stmt.where(RecognitionEvent.action != UNCONFIRMED)
     rows = db.scalars(stmt.order_by(RecognitionEvent.seen_at.desc()).limit(max(1, min(limit, 200)))).all()
     data = [
         ser(

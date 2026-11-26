@@ -21,7 +21,7 @@ from app.models import (
     PresenceSession,
 )
 from app.security import current_user, json_body
-from app.services import seat_memory
+from app.services import desks
 from app.services.daily_tracking_engine import DailyTrackingService
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"])
@@ -393,6 +393,18 @@ def ingest_tracking_frame(body: dict = Depends(json_body), db: Session = Depends
         if session and now - session.last_seen_at > STALE_TRACK_AFTER:
             session.ended_at = session.last_seen_at
             session = None
+        # The AI now recognises someone else on this body: a weak first match corrected by a stronger one, or the
+        # tracker swapped two people. Close the session at its last sighting and start one under the new name, so
+        # the first name doesn't stay on the body (26 Nov: Afham's name stayed on Sivathees and then Muhni).
+        if (
+            session
+            and emp_id
+            and session.employee_id
+            and emp_id != session.employee_id
+            and session.identity_verification_status != desks.SEAT
+        ):
+            session.ended_at = session.last_seen_at
+            session = None
         if not session:
             session = PersonTrackSession(
                 camera_id=camera_id,
@@ -410,8 +422,8 @@ def ingest_tracking_frame(body: dict = Depends(json_body), db: Session = Depends
             db.flush()
         else:
             session.last_seen_at = now
-            # A name from seat memory (app.services.seat_memory) gives way to what the AI recognises on the track.
-            if emp_id and (not session.employee_id or session.identity_verification_status == seat_memory.SEAT):
+            # A name from the old seat memory (desks.SEAT) gives way to what the AI recognises on the track.
+            if emp_id and (not session.employee_id or session.identity_verification_status == desks.SEAT):
                 session.employee_id = emp_id
                 session.identity_verification_status = identity_status
             if zone_id:

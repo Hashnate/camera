@@ -7,11 +7,12 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, Cctv, Clock, KeyRound, Loader2, ScanFace, Smartphone, UserCheck, X, type LucideIcon } from 'lucide-react';
+import { AlertCircle, Check, Cctv, Clock, KeyRound, Loader2, Plug, ScanFace, Smartphone, UserCheck, X, type LucideIcon } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Card, Skeleton, btn } from '@/components/ui';
 import { useShell } from '@/components/shell/ShellContext';
 import { CamerasTab } from '@/components/settings/CamerasTab';
+import { IntegrationsTab } from '@/components/settings/IntegrationsTab';
 import { WorkSchedulesTab } from '@/components/settings/WorkSchedulesTab';
 import { Notice, inputBase } from '@/components/settings/parts';
 import { settingsApi, type SettingsSection, type SettingsSectionName } from '@/lib/api';
@@ -19,7 +20,7 @@ import { fmtTime } from '@/lib/format';
 
 // ---------------------------------------------------------------- tabs
 
-type TabId = 'cameras' | 'account' | 'recognition' | 'attendance' | 'work-hours' | 'enrollment';
+type TabId = 'cameras' | 'account' | 'recognition' | 'attendance' | 'work-hours' | 'enrollment' | 'integrations';
 
 const TABS: { id: TabId; label: string; icon: LucideIcon; description: string }[] = [
   { id: 'cameras', label: 'Cameras', icon: Cctv, description: 'Add cameras and choose which lenses recognise faces' },
@@ -28,7 +29,11 @@ const TABS: { id: TabId; label: string; icon: LucideIcon; description: string }[
   { id: 'attendance', label: 'Attendance', icon: UserCheck, description: 'Away time, check-out and repeat sightings' },
   { id: 'work-hours', label: 'Work hours', icon: Clock, description: 'Shift start and end times, grace periods and working days' },
   { id: 'enrollment', label: 'Phone enrolment', icon: Smartphone, description: 'The QR code link and photos kept per employee' },
+  { id: 'integrations', label: 'Integrations', icon: Plug, description: 'Let other systems, such as your ERP, read and update WorkSight' },
 ];
+
+// API keys and webhooks give access to the data, like user accounts: only for people who manage accounts.
+const TAB_PERMISSION: Partial<Record<TabId, 'users.manage'>> = { integrations: 'users.manage' };
 
 // ---------------------------------------------------------------- generic settings form
 
@@ -501,7 +506,8 @@ function AccountForm({
 // ---------------------------------------------------------------- page
 
 export default function SettingsPage() {
-  const { status, refreshStatus } = useShell();
+  const { status, refreshStatus, can } = useShell();
+  const tabs = TABS.filter((t) => !TAB_PERMISSION[t.id] || can(TAB_PERMISSION[t.id]!));
   const [tab, setTab] = useState<TabId>('cameras');
   const [data, setData] = useState<Record<SettingsSectionName, SettingsSection> | null>(null);
   const [canEdit, setCanEdit] = useState(false);
@@ -510,8 +516,9 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
-    if (t && TABS.some((x) => x.id === t)) setTab(t as TabId);
-  }, []);
+    if (t && tabs.some((x) => x.id === t)) setTab(t as TabId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs.length]);
 
   const selectTab = (t: TabId) => {
     setTab(t);
@@ -554,7 +561,7 @@ export default function SettingsPage() {
     window.setTimeout(refreshStatus, 31_000); // show the AI service's confirmation once it has picked them up
   };
 
-  const current = TABS.find((t) => t.id === tab)!;
+  const current = tabs.find((t) => t.id === tab) ?? tabs[0];
   const accountReady = !!data && !!data.ezviz.values.appKey && !!data.ezviz.values.appSecretSet;
   const applied =
     status?.reachable && status.settingsSource === 'dashboard' && status.settingsLoadedAt
@@ -571,7 +578,7 @@ export default function SettingsPage() {
         <div className="grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
           <nav ref={navRef} aria-label="Settings sections" className="-mx-4 px-4 overflow-x-auto lg:mx-0 lg:px-0 lg:overflow-visible">
             <ul className="flex gap-1 lg:flex-col">
-              {TABS.map((t) => {
+              {tabs.map((t) => {
                 const active = t.id === tab;
                 const Icon = t.icon;
                 return (
@@ -643,6 +650,7 @@ export default function SettingsPage() {
                 )}
                 {tab === 'work-hours' && <WorkSchedulesTab canEdit={canEdit} notify={notify} />}
                 {tab === 'enrollment' && <SectionForm name="enrollment" groups={ENROLLMENT_GROUPS} section={data.enrollment} canEdit={canEdit} onSaved={onSaved} />}
+                {current.id === 'integrations' && <IntegrationsTab notify={notify} />}
               </>
             ) : null}
           </div>

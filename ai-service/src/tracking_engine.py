@@ -22,6 +22,10 @@ log = logging.getLogger("ai.tracking")
 # Identity handoff (see ZoneTrackingEngine._hand_off_identities). Clothing similarity is the correlation of
 # torso colour histograms; measured on the office cameras: same person 0.88-0.98, different people median 0.31,
 # 95th percentile 0.47-0.59.
+# Off since 26 Nov: in this office people sit shoulder to shoulder, and a neighbour's body appearing where someone was
+# just lost inherited their name (26 Nov 10:24: Musni's name went to Jawahar at the next desk as Musni walked out;
+# 25 Nov 12:11 likewise). Names now come from faces only; the backend's desks cover people whose face is hidden.
+HANDOFF_ENABLED = False
 HANDOFF_WINDOW_SEC = 90.0     # same spot: a lost named person can hand their name on for this long
 SPOT_MIN_CORR = 0.60          # ... if the clothing is at least this similar
 # No "same clothes" hand-over after longer gaps: shirt colour can't tell people in this office apart well enough
@@ -662,7 +666,8 @@ class ZoneTrackingEngine:
         if frame is not None:
             self.appearance_enabled = True
             self._update_appearance(active_tracks, frame, now)
-        self._hand_off_identities(active_tracks, removed_tracks, now)
+        if HANDOFF_ENABLED:
+            self._hand_off_identities(active_tracks, removed_tracks, now)
 
         # -------------------------------------------------------------
         # 1. Parse Input Faces into Standardized Format

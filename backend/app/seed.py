@@ -94,8 +94,13 @@ def seed(db: Session) -> None:
             "password_hash": "",
         },
     )
-    admin.password_hash = hash_password("Admin@123456")
-    print(f"[Seed] Super Admin created: {admin.email} / Admin@123456")
+    # Only a new account gets the default password. This runs on every backend start, and resetting an existing
+    # account's password here would undo every password change on each restart or deploy.
+    if not admin.password_hash:
+        admin.password_hash = hash_password("Admin@123456")
+        print(f"[Seed] Super Admin created: {admin.email} / Admin@123456")
+    else:
+        print(f"[Seed] Super Admin {admin.email} already exists: password left unchanged")
 
     # 6. Employees - Preserves existing real registered employees (no demo records)
     # Registered employees are managed exclusively via the Register Employee page.

@@ -265,12 +265,11 @@ async def validate_face_image(
 # ---- phone self-enrolment links (QR code)
 
 
-@router.post("/{employee_id}/mobile-session")
-def create_mobile_session(employee_id: str, user: AuthUser = Depends(can_manage), db: Session = Depends(get_db)):
-    """Issue a one-time link (shown as a QR code) so the employee can enrol from their own phone."""
-    emp = db.get(Employee, employee_id)
-    if not emp:
-        raise ApiError(404, "Employee not found")
+def issue_mobile_session(db: Session, emp: Employee, created_by_id: str | None) -> tuple[FaceEnrollmentSession, str]:
+    """Create a one-time phone enrolment link for `emp` and commit. Returns the session and its raw token.
+
+    Used by the dashboard (QR code) and the integration API (/api/v1/employees/{code}/enrolment-link).
+    """
     if not emp.is_active:
         raise ApiError(400, "Cannot enrol an inactive employee")
 
@@ -290,17 +289,34 @@ def create_mobile_session(employee_id: str, user: AuthUser = Depends(can_manage)
         employee_id=emp.id,
         token_hash=hash_token(token),
         status="PENDING",
-        created_by_id=user.id,
+        created_by_id=created_by_id,
         expires_at=utcnow() + timedelta(minutes=settings_store.value("enrollment", "mobileLinkTtlMin")),
     )
     db.add(sess)
     db.commit()
+    return sess, token
 
-    lan_ip = _lan_ip()
+
+def enrolment_base_url(lan_ip: str | None = None) -> str | None:
+    """Base address the phone link points at (Settings > Phone enrolment), or None if it can't be worked out."""
     # e.g. "https://{lan_ip}:3443" follows the PC's current Wi-Fi address.
     public_base = settings_store.value("enrollment", "mobileBaseUrl")
     if "{lan_ip}" in public_base:
+        lan_ip = lan_ip or _lan_ip()
         public_base = public_base.replace("{lan_ip}", lan_ip) if lan_ip else ""
+    return public_base.rstrip("/") or None
+
+
+@router.post("/{employee_id}/mobile-session")
+def create_mobile_session(employee_id: str, user: AuthUser = Depends(can_manage), db: Session = Depends(get_db)):
+    """Issue a one-time link (shown as a QR code) so the employee can enrol from their own phone."""
+    emp = db.get(Employee, employee_id)
+    if not emp:
+        raise ApiError(404, "Employee not found")
+    sess, token = issue_mobile_session(db, emp, user.id)
+
+    lan_ip = _lan_ip()
+    public_base = enrolment_base_url(lan_ip)
 
     return {
         "success": True,

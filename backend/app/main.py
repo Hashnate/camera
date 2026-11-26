@@ -12,7 +12,8 @@ import os
 from app.config import settings
 from app.errors import register_error_handlers
 from app.database import Base, engine
-from app.services import seat_memory
+from app import v1
+from app.services import webhooks
 from app.routers import (
     analytics,
     attendance,
@@ -23,6 +24,7 @@ from app.routers import (
     employees,
     enroll_public,
     faces,
+    integrations,
     internal,
     me,
     presence,
@@ -80,8 +82,10 @@ async def lifespan(_app: FastAPI):
         conn.exec_driver_sql('CREATE UNIQUE INDEX IF NOT EXISTS "User_employeeId_key" ON "User" ("employeeId")')
     if not settings.AI_SERVICE_KEY:
         log.warning("[WorkSight Backend] AI_SERVICE_KEY not set: automatic attendance is disabled")
-    seat_memory.start()  # keeps people named while they sit where they were recognised (both lenses)
+    if os.getenv("WEBHOOKS_WORKER", "1") != "0":
+        webhooks.start()  # sends webhook events to other systems (app.services.webhooks)
     yield
+    webhooks.stop()
 
 
 app = FastAPI(title="WorkSight Backend API", version="1.0.0", lifespan=lifespan)
@@ -111,9 +115,12 @@ def health():
     }
 
 
-for module in (auth, work_attendance, presence, zones, tracking, daily_tracking, breaks, cameras, employees, attendance, analytics, faces, enroll_public, recognition, work_hours, work_schedules, internal, settings_router, users, me):
+for module in (auth, work_attendance, presence, zones, tracking, daily_tracking, breaks, cameras, employees, attendance, analytics, faces, enroll_public, recognition, work_hours, work_schedules, internal, settings_router, users, me, integrations):
     app.include_router(module.router)
 
 app.include_router(presence.internal_router)
 app.include_router(tracking.internal_router)
 app.include_router(daily_tracking.internal_daily_router)
+
+# Integration API for other systems (ERP), with its own docs at /api/v1/docs. See app.v1.
+app.mount("/api/v1", v1.api)

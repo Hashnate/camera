@@ -22,7 +22,7 @@ from typing import Optional
 from sqlalchemy import func, literal, select, text
 from sqlalchemy.orm import Session
 
-from app.services import settings_store
+from app.services import desks, settings_store
 from app.database import today_utc, utcnow
 from app.models import AttendanceRecord, Employee, PersonTrackSession, RecognitionEvent, TrackObservation, WorkSchedule
 from app.serialize import value
@@ -136,10 +136,14 @@ def load_presence(
                 TrackObservation.observed_at < range_end,
             )
             .group_by(PersonTrackSession.employee_id, bucket)
-        )
+        ).all()
+        # Anyone sitting at a person's desk (app.services.desks).
+        track_rows += desks.desk_sightings(db, {emp for emp, _ in rec_by_key}, range_start, range_end, TRACK_SAMPLE_SEC)
         for emp_id, t in track_rows:
             rec_id = rec_by_key.get((emp_id, t.date().isoformat()))  # same day key as record_date()
-            if rec_id and rec_id in face_counts:
+            arrived = by_record[rec_id].record.check_in if rec_id else None
+            # Not before the check-in: a body named for someone (or at their desk) before they arrived was someone else.
+            if rec_id and rec_id in face_counts and (arrived is None or t >= arrived - timedelta(minutes=1)):
                 times[rec_id].append(t)
 
         for rec_id, ts in times.items():

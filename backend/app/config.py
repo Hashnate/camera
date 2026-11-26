@@ -41,6 +41,9 @@ class Settings:
     EZVIZ_STREAM_EXPIRE_SEC: int = int(os.getenv("EZVIZ_STREAM_EXPIRE_SEC", "7200"))  # live-stream link lifetime
 
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    # The office's timezone (IANA name). The integration API (/api/v1) gives every time in it, with its offset.
+    # Same as the server's TZ, which the rest of the app already uses for work schedules.
+    OFFICE_TZ: str = os.getenv("OFFICE_TZ") or os.getenv("TZ") or "Asia/Colombo"
 
     # AI face-recognition service (automatic attendance)
     AI_SERVICE_URL: str = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:8000").rstrip("/")
