@@ -55,9 +55,12 @@ def _iou(box, d: list[float]):
     return inter / func.nullif(union, 0.0)
 
 
-def desk_sightings(db, employee_ids: set[str], start: datetime, end: datetime, sample_sec: int) -> list[tuple[str, datetime]]:
-    """(employee id, time) for each sample_sec slot in [start, end) in which a body sat at that employee's desk."""
-    out: list[tuple[str, datetime]] = []
+def desk_sightings(
+    db, employee_ids: set[str], start: datetime, end: datetime, sample_sec: int
+) -> list[tuple[str, datetime, int]]:
+    """(employee id, time, frames) for each sample_sec slot in [start, end) in which a body sat at that employee's
+    desk; frames = how many observations in the slot fit the desk (app.services.headcount weighs them)."""
+    out: list[tuple[str, datetime, int]] = []
     for (camera_id, channel_no), entries in load_desks(db).items():
         # The lens's boxes as four numbers, read from JSON once (MATERIALIZED: else each use below re-parses it).
         obs = (
@@ -87,6 +90,6 @@ def desk_sightings(db, employee_ids: set[str], start: datetime, end: datetime, s
             continue
         owner = case(*whens, else_=None).label("owner")
         bucket = func.date_bin(text(f"interval '{int(sample_sec)} seconds'"), obs.c.t, literal(datetime(2000, 1, 1)))
-        rows = db.execute(select(owner, func.max(obs.c.t)).group_by(owner, bucket))
-        out.extend((emp, t) for emp, t in rows if emp)
+        rows = db.execute(select(owner, func.max(obs.c.t), func.count()).group_by(owner, bucket))
+        out.extend((emp, t, n) for emp, t, n in rows if emp)
     return out
