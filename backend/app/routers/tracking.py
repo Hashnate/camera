@@ -1,6 +1,7 @@
 """Real-Time Person Tracking & Doorway Transition Event APIs."""
 
 import hmac
+import logging
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
@@ -32,6 +33,76 @@ LAST_OBS_SAMPLE_TIME: Dict[tuple, float] = {}  # (camera, channel, track_id) -> 
 # An open track session not updated for this long is from an earlier AI-service run (track numbers restart).
 STALE_TRACK_AFTER = timedelta(seconds=60)
 BIOMETRIC_DIAGNOSTICS_BUFFER: deque = deque(maxlen=200)
+# Two samples of one body (about 3 s apart) overlap far more than this, even when the person stands up or turns.
+# Less means the tracker moved the track number onto someone else.
+JUMP_IOU = 0.3
+
+log = logging.getLogger("worksight.tracking")
+
+
+def _box_iou(a, b) -> float:
+    """Overlap of two [x1, y1, x2, y2] boxes; 1.0 when a box is missing, so it never looks like a jump."""
+    try:
+        ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+        iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+        inter = ix * iy
+        union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    except (TypeError, IndexError):
+        return 1.0
+    return inter / union if union > 0 else 0.0
+
+
+def _first_name(db: Session, session: PersonTrackSession, emp_id: str, identity_status: str, box) -> PersonTrackSession:
+    """Put the first recognised name on a track from its last box jump onward, not on the whole track.
+
+    A face is often recognised minutes after the track started. When the box stayed on one body all along (someone
+    sat with their back turned, then looked up), the whole track is that person. But the tracker sometimes moves a
+    track number onto a person walking past, and the face recognised then is the passer-by's: on 27 Nov Muhfees
+    was recognised at 09:04:56 as he passed Jawahar's desk, and his name went back to 08:41 on Jawahar's own body.
+    So walk back from the box being named while each earlier sample still overlaps the next; the part before a jump
+    was someone else and stays unnamed, closed at its last sighting. Returns the session the frame belongs to.
+    """
+    newest_first = db.scalars(
+        select(TrackObservation)
+        .where(TrackObservation.track_session_id == session.id)
+        .order_by(TrackObservation.observed_at.desc())
+    ).all()
+    named_part: list[TrackObservation] = []
+    prev = box
+    for obs in newest_first:
+        if _box_iou(obs.bounding_box, prev) < JUMP_IOU:
+            break
+        named_part.append(obs)
+        prev = obs.bounding_box
+    else:  # no jump: the whole track is this person
+        session.employee_id = emp_id
+        session.identity_verification_status = identity_status
+        return session
+
+    before_jump = newest_first[len(named_part)]
+    session.ended_at = before_jump.observed_at
+    session.last_seen_at = before_jump.observed_at
+    named = PersonTrackSession(
+        camera_id=session.camera_id,
+        channel_no=session.channel_no,
+        track_id=session.track_id,
+        employee_id=emp_id,
+        started_at=named_part[-1].observed_at if named_part else utcnow(),
+        last_seen_at=utcnow(),
+        identity_verification_status=identity_status,
+        current_zone_id=session.current_zone_id,
+        identity_state=session.identity_state,
+        tracking_without_face_sec=session.tracking_without_face_sec,
+    )
+    db.add(named)
+    db.flush()
+    for obs in named_part:
+        obs.track_session_id = named.id
+    log.info(
+        "[tracking] lens %s track %s: name %s from %s on; the %d earlier samples were someone else (box jumped)",
+        session.channel_no, session.track_id, emp_id, named.started_at, len(newest_first) - len(named_part),
+    )
+    return named
 
 
 def require_service_key(x_service_key: str = Header(default="")) -> None:
@@ -423,9 +494,12 @@ def ingest_tracking_frame(body: dict = Depends(json_body), db: Session = Depends
         else:
             session.last_seen_at = now
             # A name from the old seat memory (desks.SEAT) gives way to what the AI recognises on the track.
-            if emp_id and (not session.employee_id or session.identity_verification_status == desks.SEAT):
+            if emp_id and session.identity_verification_status == desks.SEAT:
                 session.employee_id = emp_id
                 session.identity_verification_status = identity_status
+            # First name on this body: only from the last box jump on (see _first_name).
+            elif emp_id and not session.employee_id:
+                session = _first_name(db, session, emp_id, identity_status, tr.get("boundingBox"))
             if zone_id:
                 session.current_zone_id = zone_id
             # Always update v2.9 ILE fields
